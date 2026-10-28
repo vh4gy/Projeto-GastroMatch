@@ -6,25 +6,25 @@ Plataforma acadêmica para conectar clientes, chefs e restaurantes em uma experi
 
 O GastroMatch simula uma aplicação web completa com:
 
-- autenticação e cadastro de usuários
-- perfis de cliente e criador
+- autenticação real com banco MySQL
+- cadastro de usuários
+- perfis de cliente, chef e administrador
 - receitas com filtros e restrições alimentares
 - videoaulas e conteúdo premium
 - compra de kits de ingredientes
 - fluxo de pagamento em interface local
-- integração com banco MySQL via PHP
+- integração com MySQL via PHP e PDO
 
 A proposta principal é aproximar o usuário da experiência profissional da cozinha, com receitas mais completas e orientações mais ricas do que uma busca simples na internet.
 
 ## Funcionalidades principais
 
-- Login e cadastro com validação de e-mail
-- verificação em duas etapas opcional por e-mail
-- CNPJ obrigatório para chef e restaurante
-- painel de perfil com edição de dados pessoais
-- criação, publicação e listagem de receitas
+- Login com e-mail e senha consultando o banco
+- cadastro com validação de e-mail e CNPJ
+- verificação em duas etapas opcional
+- painel de perfil com dados vindos do banco
+- criação e listagem de receitas
 - filtros por dificuldade, tempo e restrição alimentar
-- seleção de receitas gratuitas e exclusivas
 - compra de kits de ingredientes
 - fluxo de checkout e registro de pedidos
 - persistência em banco de dados MySQL
@@ -68,13 +68,13 @@ O sistema realiza:
 
 - validação de e-mail
 - validação de CNPJ para chef/restaurante
-- login com e-mail e senha
+- login com e-mail e senha consultando a tabela `usuarios`
 - verificação em duas etapas opcional
-- sessão do usuário em sessionStorage
+- sessão do usuário em `sessionStorage`
 
 ## Requisitos
 
-- XAMPP ou outro ambiente com Apache + MySQL + PHP
+- XAMPP com Apache + MySQL + PHP
 - navegador moderno
 - acesso local em localhost
 
@@ -102,15 +102,9 @@ Abra no navegador:
 - http://localhost:8088/GastroMatch/login.html
 - http://localhost:8088/GastroMatch/index.html
 
-## Acesso demo
+## Usuários iniciais do banco
 
-A autenticação demo usa alguns perfis pré-definidos:
-
-- Cliente: `cliente@gastromatch.com.br` — código `GM-CLI-2026`
-- Chef: `chef@gastromatch.com.br` — código `GM-CHEF-2026`
-- Administrador: `admin@gastromatch.com.br` — código `GM-ADM-2026`
-
-Esses dados servem para testes locais e validação de fluxo. Em produção, os códigos devem ser substituídos por segurança real e autenticação robusta.
+Os dados do banco podem ser acessados após a importação do script SQL. O sistema usa autenticação real, então a criação e login são feitos como usuários cadastrados na tabela `usuarios`.
 
 ## Validações de segurança implementadas
 
@@ -120,14 +114,15 @@ Esses dados servem para testes locais e validação de fluxo. Em produção, os 
 - prevenção de cadastro duplicado
 - senha mínima de 6 caracteres
 - controle de sessão para o usuário autenticado
-- limpeza de carrinho e perfil ao sair da conta
+- consulta de perfil diretamente no banco
+- uso do MySQL como origem principal dos dados
 
 ## Observações importantes
 
-- A autenticação real depende de PHP e MySQL funcionando corretamente no servidor.
-- O projeto foi validado em JavaScript com checagem final do código sem erros.
-- A integração externa de verificação de e-mail pode ser habilitada por variáveis de ambiente em ambiente real, mas o sistema também usa fallback local para manter o projeto funcional.
-- O sistema foi desenvolvido como projeto acadêmico e pode ser refinado para produção com autenticação JWT, envio real de e-mails e integração com APIs externas de CNPJ e localização.
+- O sistema foi ajustado para usar o MySQL do XAMPP como fonte principal de autenticação e dados.
+- O projeto depende de PHP e MySQL funcionando corretamente no servidor local.
+- O README reflete a versão acadêmica do projeto e os fluxos de login e dados em banco real.
+- A aplicação pode ser expandida para produção com autenticação JWT, envio real de e-mails e integrações externas.
 
 ## Possíveis evoluções futuras
 
