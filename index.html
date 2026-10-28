@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7941d">
+  <title>GastroMatch — Receitas que conectam</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Open+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="Estilo/estilo.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="topbar">
+      <a class="marca" href="#inicio" aria-label="GastroMatch, início">
+        <span class="marca-icone" aria-hidden="true">G</span>
+        <span>
+          <strong>GastroMatch</strong>
+          <small>receitas que conectam</small>
+        </span>
+      </a>
+
+      <nav id="menu" aria-label="Navegação principal">
+        <a href="#inicio" data-p="inicio">Início</a>
+        <a href="#perto" data-p="perto">Perto de você</a>
+        <a href="#feed" data-p="feed">Feed de receitas</a>
+        <a href="#perfil" data-p="perfil">Perfil</a>
+        <a href="#chef" data-p="chef">Painel do Chef</a>
+        <a class="link-login" id="loginNav" href="login.html">Entrar</a>
+      </nav>
+
+      <div class="acoes-topo">
+        <a class="avatar-mini" id="avatarMini" href="#perfil" aria-label="Abrir perfil">GM</a>
+        <a class="carrinho" href="#carrinho" aria-label="Abrir carrinho">
+          <svg viewBox="0 0 24 24" aria-hidden="true" width="27" height="27" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 4h2l2.2 10.4a1.2 1.2 0 0 0 1.2 1h8.7a1.2 1.2 0 0 0 1.2-1L20 7H6"/>
+            <circle cx="9.5" cy="19.3" r="1.2"/>
+            <circle cx="17.5" cy="19.3" r="1.2"/>
+          </svg>
+          <b id="badge">0</b>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <main id="app"></main>
+
+  <footer class="rodape">
+    <div class="rodape-interno">
+      <span class="marca-icone" aria-hidden="true">G</span>
+      <span><strong>GastroMatch</strong><small>receitas que conectam</small></span>
+      <span class="rodape-copy">Projeto acadêmico • Front-end demonstrativo</span>
+    </div>
+  </footer>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="Codigo/codigo.js"></script>
+</body>
+</html>

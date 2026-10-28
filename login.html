@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7941d">
+  <title>GastroMatch — Entrar</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Open+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="Estilo/login.css">
+</head>
+<body>
+  <main class="login-page">
+    <section class="login-visual" aria-label="Apresentação do GastroMatch">
+      <div class="visual-overlay"></div>
+      <div class="visual-content">
+        <a class="brand" href="index.html#inicio"><span class="brand-mark">G</span><span><strong>GastroMatch</strong><small>receitas que conectam</small></span></a>
+        <span class="eyebrow">uma experiência gastronômica completa</span>
+        <h1>Descubra sabores.<br><em>Conecte-se.</em><br>Cozinhe.</h1>
+        <p>Entre como cliente, chef ou administrador e acesse a área certa da plataforma.</p>
+        <div class="visual-pills"><span>🍳 Receitas</span><span>🎥 Videoaulas</span><span>🛒 Kits</span><span>💬 Comunidade</span></div>
+      </div>
+    </section>
+
+    <section class="login-panel">
+      <div class="panel-topo">
+        <a href="index.html#inicio" class="voltar">← Voltar ao site</a>
+        <div class="mini-logo"><span class="mini-mark">G</span> GastroMatch</div>
+      </div>
+
+      <div class="login-card">
+        <span class="eyebrow">acesso à plataforma</span>
+        <h2>Bem-vindo ao GastroMatch</h2>
+        <p class="intro">Entre com sua conta ou crie uma nova para acessar receitas, chef e compras por assinatura ou kits.</p>
+
+        <div class="auth-switch" role="tablist" aria-label="Modo de autenticação">
+          <button type="button" class="auth-tab active" data-auth-tab="login" aria-selected="true">Entrar</button>
+          <button type="button" class="auth-tab" data-auth-tab="register" aria-selected="false">Criar conta</button>
+        </div>
+
+        <div class="role-grid" id="roleGrid">
+          <button type="button" class="role-card" data-role="cliente" aria-pressed="false">
+            <span class="role-icon">👤</span>
+            <span><strong>Cliente</strong><small>Explorar receitas, avaliações e kits</small></span>
+          </button>
+          <button type="button" class="role-card" data-role="chef" aria-pressed="false">
+            <span class="role-icon">👨‍🍳</span>
+            <span><strong>Chef / Criador</strong><small>Publicar receitas e gerenciar conteúdo</small></span>
+          </button>
+          <button type="button" class="role-card" data-role="admin" aria-pressed="false">
+            <span class="role-icon">🛡️</span>
+            <span><strong>Administrador</strong><small>Acessar área restrita e banco do projeto</small></span>
+          </button>
+        </div>
+
+        <div id="loginFormWrap">
+          <form id="loginForm" autocomplete="off" novalidate>
+            <input type="hidden" id="perfilAcesso" value="">
+            <label class="campo">
+              <span>E-mail</span>
+              <input id="loginEmail" type="email" placeholder="seu@email.com" required>
+            </label>
+            <label class="campo">
+              <span>Senha</span>
+              <div class="input-wrap"><input id="loginPassword" type="password" placeholder="Sua senha" required><button type="button" id="togglePassword" class="toggle-code" aria-label="Mostrar senha">Mostrar</button></div>
+            </label>
+            <label class="campo campo-verificacao" id="campoCodigoVerificacao" hidden>
+              <span>Código de verificação (2 etapas)</span>
+              <input id="codigoVerificacao" type="text" inputmode="numeric" maxlength="6" placeholder="Ex.: 482931">
+            </label>
+            <label class="campo">
+              <span>Código de acesso (modo demo)</span>
+              <div class="input-wrap"><input id="codigoAcesso" type="password" inputmode="text" maxlength="40" placeholder="Ex.: GM-CLI-2026"><button type="button" id="toggleCode" class="toggle-code" aria-label="Mostrar código">Mostrar</button></div>
+            </label>
+            <div id="selectedRole" class="selected-role" hidden></div>
+            <button class="primary-btn" type="submit" id="entrarBtn">Entrar com e-mail</button>
+            <p id="loginMsg" class="login-msg" role="alert" aria-live="polite"></p>
+          </form>
+        </div>
+
+        <div id="registerFormWrap" hidden>
+          <form id="registerForm" autocomplete="off" novalidate>
+            <label class="campo">
+              <span>Nome completo</span>
+              <input id="registroNome" type="text" maxlength="80" placeholder="Seu nome" required>
+            </label>
+            <label class="campo">
+              <span>E-mail</span>
+              <input id="registroEmail" type="email" placeholder="seu@email.com" required>
+            </label>
+            <label class="campo">
+              <span>Tipo de conta</span>
+              <select id="registroTipo" required>
+                <option value="cliente">Cliente</option>
+                <option value="chef">Chef / Criador</option>
+                <option value="restaurante">Restaurante</option>
+              </select>
+            </label>
+            <label class="campo campo-cnpj" id="campoCnpj" hidden>
+              <span>CNPJ da empresa / perfil</span>
+              <input id="registroCnpj" type="text" inputmode="numeric" maxlength="18" placeholder="00.000.000/0000-00">
+            </label>
+            <label class="checkline">
+              <input id="registroVerificacao" type="checkbox" checked>
+              <span>Exigir verificação em duas etapas por e-mail</span>
+            </label>
+            <label class="campo">
+              <span>Senha</span>
+              <input id="registroSenha" type="password" minlength="6" placeholder="Mínimo 6 caracteres" required>
+            </label>
+            <label class="campo">
+              <span>Confirmar senha</span>
+              <input id="registroConfirmarSenha" type="password" minlength="6" placeholder="Repita a senha" required>
+            </label>
+            <button class="primary-btn" type="submit" id="criarContaBtn">Criar conta</button>
+            <p id="registerMsg" class="login-msg" role="alert" aria-live="polite"></p>
+          </form>
+        </div>
+
+        <details class="demo-access" hidden>
+          <summary>Modo demo</summary>
+          <small>O login real do sistema usa o banco MySQL do XAMPP e os dados cadastrados no banco.</small>
+        </details>
+      </div>
+
+      <footer>Projeto acadêmico • GastroMatch • Login demonstrativo</footer>
+    </section>
+  </main>
+  <script src="Codigo/login.js"></script>
+</body>
+</html>

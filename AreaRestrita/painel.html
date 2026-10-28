@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#16365f">
+  <title>GastroMatch — Painel de Dados</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="area-restrita.css">
+</head>
+<body class="admin-page">
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="sidebar-brand" href="#inicio"><span class="brand-mark">G</span><div><strong>GastroMatch</strong><small>área interna</small></div></a>
+      <div class="access-chip"><span id="roleDot"></span><div><b id="roleName">Administrador</b><small id="roleEmail">admin@gastromatch.com.br</small></div></div>
+      <nav class="side-nav" aria-label="Área restrita">
+        <button data-view="inicio" class="ativo">Visão geral</button>
+        <button data-view="tabelas">Tabelas do banco</button>
+        <button data-view="relacoes">Relações / cardinalidades</button>
+        <button data-view="receita">Cadastrar receita</button>
+      </nav>
+      <div class="sidebar-foot"><a href="../index.html#inicio">← Site público</a><button id="logoutBtn">Sair da área restrita</button></div>
+    </aside>
+
+    <main class="dashboard">
+      <header class="dash-header">
+        <div><span class="kicker">GastroMatch • banco de dados</span><h1 id="pageTitle">Visão geral</h1><p id="pageSubtitle">Resumo da estrutura criada para o projeto.</p></div>
+        <div class="header-actions"><span class="secure-badge">🔒 Acesso interno</span><button class="outline-btn" data-view-jump="receita">+ Nova receita</button></div>
+      </header>
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+      <section id="view-inicio" class="view ativo"></section>
+      <section id="view-tabelas" class="view"></section>
+      <section id="view-relacoes" class="view"></section>
+      <section id="view-receita" class="view"></section>
+      <footer class="dash-footer">Projeto acadêmico • Área demonstrativa de modelagem e cadastro • GastroMatch</footer>
+    </main>
+  </div>
+  <script src="area-restrita.js"></script>
+</body>
+</html>
