@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS receitas (
     nivel_dificuldade ENUM('facil','medio','dificil') NOT NULL DEFAULT 'facil',
     tipo_acesso ENUM('gratuito','exclusivo_pago') NOT NULL DEFAULT 'gratuito',
     preco_conteudo DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-    img VARCHAR(255) NOT NULL DEFAULT 'img/pastel.jpg',
+    img VARCHAR(255) NOT NULL DEFAULT 'img/pastel.png',
     pais CHAR(2) NULL,
     nota DECIMAL(3,1) NOT NULL DEFAULT 0.0,
     avaliacoes INT NOT NULL DEFAULT 0,
@@ -90,23 +90,76 @@ CREATE TABLE IF NOT EXISTS preparo_receita (
     FOREIGN KEY (id_receita) REFERENCES receitas(id_receita) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS enderecos (
+    id_endereco INT AUTO_INCREMENT PRIMARY KEY,
+    id_usuario INT NOT NULL,
+    identificacao VARCHAR(50) NOT NULL DEFAULT 'Principal',
+    cep CHAR(8) NOT NULL,
+    logradouro VARCHAR(150) NOT NULL,
+    numero VARCHAR(20) NOT NULL,
+    complemento VARCHAR(100) NULL,
+    bairro VARCHAR(100) NOT NULL,
+    cidade VARCHAR(100) NOT NULL,
+    estado CHAR(2) NOT NULL,
+    endereco_padrao TINYINT(1) NOT NULL DEFAULT 0,
+    criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_enderecos_usuario (id_usuario),
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS pedidos (
     id_pedido INT AUTO_INCREMENT PRIMARY KEY,
     id_cliente INT NOT NULL,
+    id_endereco INT NULL,
+    nome_destinatario VARCHAR(100) NOT NULL,
+    observacoes TEXT NULL,
+    entrega_cep CHAR(8) NOT NULL,
+    entrega_logradouro VARCHAR(150) NOT NULL,
+    entrega_numero VARCHAR(20) NOT NULL,
+    entrega_complemento VARCHAR(100) NULL,
+    entrega_bairro VARCHAR(100) NOT NULL,
+    entrega_cidade VARCHAR(100) NOT NULL,
+    entrega_estado CHAR(2) NOT NULL,
     data_pedido DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     status_pedido ENUM('pendente','confirmado','cancelado') NOT NULL DEFAULT 'pendente',
+    status_entrega ENUM('aguardando_separacao','preparando','enviado','entregue','cancelado') NOT NULL DEFAULT 'aguardando_separacao',
     valor_total DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-    FOREIGN KEY (id_cliente) REFERENCES usuarios(id_usuario)
+    FOREIGN KEY (id_cliente) REFERENCES usuarios(id_usuario),
+    FOREIGN KEY (id_endereco) REFERENCES enderecos(id_endereco) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS pagamentos (
+    id_pagamento INT AUTO_INCREMENT PRIMARY KEY,
+    id_pedido INT NOT NULL,
+    metodo ENUM('pix','cartao','boleto','transferencia') NOT NULL,
+    status ENUM('pendente','aprovado','recusado','estornado') NOT NULL DEFAULT 'pendente',
+    valor DECIMAL(10,2) NOT NULL,
+    moeda CHAR(3) NOT NULL DEFAULT 'BRL',
+    provedor VARCHAR(40) NOT NULL DEFAULT 'demonstracao',
+    referencia_transacao VARCHAR(80) NULL UNIQUE,
+    bandeira_cartao VARCHAR(20) NULL,
+    ultimos_quatro CHAR(4) NULL,
+    parcelas TINYINT UNSIGNED NOT NULL DEFAULT 1,
+    criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_pagamentos_pedido (id_pedido),
+    FOREIGN KEY (id_pedido) REFERENCES pedidos(id_pedido) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS itens_pedido (
     id_item INT AUTO_INCREMENT PRIMARY KEY,
     id_pedido INT NOT NULL,
     tipo_item ENUM('kit_ingredientes','receita') NOT NULL DEFAULT 'kit_ingredientes',
-    id_referencia INT NOT NULL,
+    id_referencia INT NULL,
+    id_kit INT NULL,
+    id_receita INT NULL,
+    nome_produto VARCHAR(150) NOT NULL,
     quantidade INT NOT NULL DEFAULT 1,
     preco_unitario DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-    FOREIGN KEY (id_pedido) REFERENCES pedidos(id_pedido) ON DELETE CASCADE
+    FOREIGN KEY (id_pedido) REFERENCES pedidos(id_pedido) ON DELETE CASCADE,
+    FOREIGN KEY (id_kit) REFERENCES kits_ingredientes(id_kit) ON DELETE SET NULL,
+    FOREIGN KEY (id_receita) REFERENCES receitas(id_receita) ON DELETE SET NULL
 );
 
 INSERT INTO usuarios (id_usuario, nome, email, senha_hash, codigo_acesso, tipo_usuario, telefone, foto_perfil, data_cadastro)
@@ -123,11 +176,11 @@ ON DUPLICATE KEY UPDATE biografia = VALUES(biografia), link_portfolio = VALUES(l
 
 INSERT INTO receitas (id_receita, id_criador, titulo, descricao_introducao, rendimento, tempo_preparo_minutos, nivel_dificuldade, tipo_acesso, preco_conteudo, img, pais, nota, avaliacoes, criado_pelo_chef, data_publicacao)
 VALUES
-(1, 2, 'Pastel de Queijo com Molho Vinagrete', 'Pastel crocante recheado com queijo e servido com vinagrete.', 8, 45, 'medio', 'gratuito', 0.00, 'img/pastel.jpg', 'br', 4.9, 85, 1, '2026-01-05 12:00:00'),
-(2, 2, 'Poutine', 'Batatas crocantes, queijo e molho gravy em um clássico reconfortante.', 4, 20, 'facil', 'gratuito', 0.00, 'img/poutine.jpg', 'ca', 4.0, 67, 1, '2026-01-06 12:00:00'),
-(3, 2, 'Carbonara', 'Massa cremosa finalizada com gemas, queijo, pimenta e guanciale.', 2, 20, 'facil', 'gratuito', 0.00, 'img/carbonara.jpg', 'it', 4.0, 99, 1, '2026-01-07 12:00:00'),
-(4, 2, 'Tacos', 'Tacos crocantes com carne temperada, vegetais e queijo.', 4, 25, 'facil', 'gratuito', 0.00, 'img/tacos.jpg', 'mx', 4.7, 52, 1, '2026-01-08 12:00:00'),
-(5, 2, 'Camarão Empanado', 'Camarões dourados e crocantes, empanados com farinha panko.', 4, 30, 'medio', 'gratuito', 0.00, 'img/camarao.jpg', '', 4.5, 38, 1, '2026-01-09 12:00:00')
+(1, 2, 'Pastel de Queijo com Molho Vinagrete', 'Pastel crocante recheado com queijo e servido com vinagrete.', 8, 45, 'medio', 'gratuito', 0.00, 'img/pastel.png', 'br', 4.9, 85, 1, '2026-01-05 12:00:00'),
+(2, 2, 'Poutine', 'Batatas crocantes, queijo e molho gravy em um clássico reconfortante.', 4, 20, 'facil', 'gratuito', 0.00, 'img/poutine.png', 'ca', 4.0, 67, 1, '2026-01-06 12:00:00'),
+(3, 2, 'Carbonara', 'Massa cremosa finalizada com gemas, queijo, pimenta e guanciale.', 2, 20, 'facil', 'gratuito', 0.00, 'img/carbonara.png', 'it', 4.0, 99, 1, '2026-01-07 12:00:00'),
+(4, 2, 'Tacos', 'Tacos crocantes com carne temperada, vegetais e queijo.', 4, 25, 'facil', 'gratuito', 0.00, 'img/tacos.png', 'mx', 4.7, 52, 1, '2026-01-08 12:00:00'),
+(5, 2, 'Camarão Empanado', 'Camarões dourados e crocantes, empanados com farinha panko.', 4, 30, 'medio', 'gratuito', 0.00, 'img/camarao.png', '', 4.5, 38, 1, '2026-01-09 12:00:00')
 ON DUPLICATE KEY UPDATE titulo = VALUES(titulo), descricao_introducao = VALUES(descricao_introducao), rendimento = VALUES(rendimento), tempo_preparo_minutos = VALUES(tempo_preparo_minutos), nivel_dificuldade = VALUES(nivel_dificuldade), tipo_acesso = VALUES(tipo_acesso), preco_conteudo = VALUES(preco_conteudo), img = VALUES(img), pais = VALUES(pais), nota = VALUES(nota), avaliacoes = VALUES(avaliacoes);
 
 INSERT INTO receitas_restricoes (id_receita, restricao)

@@ -197,7 +197,7 @@ function renderReceita(auth){
             <label class="field"><span>Dificuldade</span><select name="nivel_dificuldade"><option value="facil">Fácil</option><option value="medio">Médio</option><option value="dificil">Difícil</option></select></label>
             <label class="field"><span>Tipo de acesso</span><select name="tipo_acesso" id="tipoAcesso"><option value="gratuito">Gratuito</option><option value="exclusivo_pago">Exclusivo pago</option></select></label>
             <label class="field" id="precoCampo"><span>Preço do conteúdo</span><input name="preco_conteudo" type="number" min="0" step="0.01" value="0"></label>
-            <label class="field span-2"><span>Imagem (URL)</span><input name="img" type="url" placeholder="https://.../minha-receita.jpg"></label>
+            <label class="field span-2"><span>Imagem (URL)</span><input name="img" type="url" placeholder="https://.../minha-receita.png"></label>
           </div>
           <div class="form-subsection"><div class="sub-head"><div><h4>Restrições alimentares</h4><p>Esta parte representa o N : N com <code>restricoes_alimentares</code>.</p></div><span class="required-note">selecione quantas precisar</span></div><div class="check-grid">${restricciones.map(x=>`<label class="check-card"><input type="checkbox" name="restricoes" value="${x.id}"><span><b>${x.nome}</b><small>receitas_restricoes</small></span></label>`).join('')}</div></div>
           <div class="form-grid">

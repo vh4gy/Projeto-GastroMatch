@@ -45,36 +45,10 @@ function emailLooksValid(string $email): bool
     return preg_match('/^[a-z0-9._%+\-]+$/', $local) === 1 && preg_match('/^[a-z0-9.-]+\.[a-z]{2,}$/i', $domain) === 1;
 }
 
-function cnpjLooksValid(string $cnpj): bool
+function cnpjHasValidFormat(string $cnpj): bool
 {
     $cnpj = preg_replace('/\D+/', '', $cnpj);
-    if (strlen($cnpj) !== 14) {
-        return false;
-    }
-    if (preg_match('/^(\d)\1{13}$/', $cnpj)) {
-        return false;
-    }
-
-    $peso1 = [5,4,3,2,9,8,7,6,5,4,3,2];
-    $peso2 = [6,5,4,3,2,9,8,7,6,5,4,3,2];
-
-    $soma = 0;
-    for ($i = 0; $i < 12; $i++) {
-        $soma += (int)$cnpj[$i] * $peso1[$i];
-    }
-    $digito1 = $soma % 11 < 2 ? 0 : 11 - ($soma % 11);
-
-    if ((int)$cnpj[12] !== $digito1) {
-        return false;
-    }
-
-    $soma = 0;
-    for ($i = 0; $i < 13; $i++) {
-        $soma += (int)$cnpj[$i] * $peso2[$i];
-    }
-    $digito2 = $soma % 11 < 2 ? 0 : 11 - ($soma % 11);
-
-    return (int)$cnpj[13] === $digito2;
+    return strlen($cnpj) === 14;
 }
 
 function externalEmailCheck(string $email): array
@@ -149,11 +123,11 @@ if ($action === 'register') {
     }
 
     if (in_array($tipo, ['chef', 'restaurante'], true) && $cnpj === '') {
-        jsonReply(false, 'Chef e restaurante devem informar um CNPJ válido.', null, 400);
+        jsonReply(false, 'Chef e restaurante devem informar um CNPJ com 14 dígitos.', null, 400);
     }
 
-    if (in_array($tipo, ['chef', 'restaurante'], true) && !cnpjLooksValid($cnpj)) {
-        jsonReply(false, 'O CNPJ informado não é válido.', null, 400);
+    if (in_array($tipo, ['chef', 'restaurante'], true) && !cnpjHasValidFormat($cnpj)) {
+        jsonReply(false, 'Informe um CNPJ com 14 dígitos.', null, 400);
     }
 
     $check = $pdo->prepare('SELECT id_usuario FROM usuarios WHERE email = :email LIMIT 1');
@@ -181,7 +155,7 @@ if ($action === 'register') {
         ':email_verificacao_codigo' => $codigoVerificacao,
         ':verificacao_2fa' => $verificacao2fa,
         ':cnpj' => in_array($tipo, ['chef', 'restaurante'], true) ? $cnpj : null,
-        ':cnpj_validado' => in_array($tipo, ['chef', 'restaurante'], true) ? 1 : 0,
+        ':cnpj_validado' => 0,
         ':ativo' => 1,
     ]);
 
@@ -372,7 +346,7 @@ if ($action === 'cadastro_receita') {
                 ? (string)$input['tipo_acesso']
                 : 'gratuito',
             ':preco_conteudo' => (float)($input['preco_conteudo'] ?? 0),
-            ':img' => trim((string)($input['img'] ?? 'img/pastel.jpg')) ?: 'img/pastel.jpg',
+            ':img' => trim((string)($input['img'] ?? 'img/pastel.png')) ?: 'img/pastel.png',
             ':pais' => trim((string)($input['pais'] ?? '')) ?: null,
             ':nota' => (float)($input['nota'] ?? 0),
             ':avaliacoes' => (int)($input['avaliacoes'] ?? 0),
@@ -435,48 +409,207 @@ if ($action === 'pedido') {
     $input = json_decode(file_get_contents('php://input'), true) ?? [];
     $idCliente = (int)($input['id_cliente'] ?? 0);
     $itens = is_array($input['itens'] ?? null) ? $input['itens'] : [];
+    $nomeDestinatario = trim((string)($input['nome_destinatario'] ?? ''));
+    $observacoes = trim((string)($input['observacoes'] ?? ''));
+    $metodo = (string)($input['metodo_pagamento'] ?? '');
+    $endereco = is_array($input['endereco'] ?? null) ? $input['endereco'] : [];
+    $cep = preg_replace('/\D+/', '', (string)($endereco['cep'] ?? ''));
+    $logradouro = trim((string)($endereco['logradouro'] ?? ''));
+    $numero = trim((string)($endereco['numero'] ?? ''));
+    $complemento = trim((string)($endereco['complemento'] ?? ''));
+    $bairro = trim((string)($endereco['bairro'] ?? ''));
+    $cidade = trim((string)($endereco['cidade'] ?? ''));
+    $estado = strtoupper(trim((string)($endereco['estado'] ?? '')));
+    $bandeiraCartao = strtolower(trim((string)($input['cartao_bandeira'] ?? '')));
+    $ultimosQuatro = preg_replace('/\D+/', '', (string)($input['cartao_ultimos4'] ?? ''));
 
-    if (!$idCliente || !$itens) {
-        jsonReply(false, 'Pedido incompleto.', null, 400);
+    if (!$idCliente || !$itens || $nomeDestinatario === '' || !in_array($metodo, ['pix', 'cartao', 'boleto', 'transferencia'], true)) {
+        jsonReply(false, 'Pedido, destinatário e forma de pagamento são obrigatórios.', null, 400);
+    }
+
+    if (strlen($cep) !== 8 || $logradouro === '' || $numero === '' || $bairro === '' || $cidade === '' || !preg_match('/^[A-Z]{2}$/', $estado)) {
+        jsonReply(false, 'Informe um endereço de entrega completo.', null, 400);
+    }
+
+    if (strlen($observacoes) > 2000) {
+        jsonReply(false, 'As observações devem ter no máximo 2.000 caracteres.', null, 400);
+    }
+
+    if (strlen($nomeDestinatario) > 100 || strlen($logradouro) > 150 || strlen($numero) > 20
+        || strlen($complemento) > 100 || strlen($bairro) > 100 || strlen($cidade) > 100) {
+        jsonReply(false, 'Um dos campos do destinatário ou endereço excede o tamanho permitido.', null, 400);
+    }
+
+    if ($metodo === 'cartao') {
+        $bandeirasAceitas = ['visa', 'mastercard', 'elo', 'amex', 'hipercard', 'outro'];
+        if (!in_array($bandeiraCartao, $bandeirasAceitas, true) || strlen($ultimosQuatro) !== 4) {
+            jsonReply(false, 'Para o cartão de demonstração, informe a bandeira e os quatro últimos dígitos.', null, 400);
+        }
+    } else {
+        $bandeiraCartao = '';
+        $ultimosQuatro = '';
     }
 
     try {
         $pdo->beginTransaction();
-        $valorTotal = 0.0;
-        foreach ($itens as $item) {
-            $valorTotal += (float)($item['preco_unitario'] ?? 0) * (int)($item['quantidade'] ?? 1);
+        $cliente = $pdo->prepare('SELECT id_usuario FROM usuarios WHERE id_usuario = :id AND ativo = 1');
+        $cliente->execute([':id' => $idCliente]);
+        if (!$cliente->fetch()) {
+            throw new RuntimeException('Cliente não encontrado ou inativo.');
         }
 
-        $pedidoStmt = $pdo->prepare('INSERT INTO pedidos (id_cliente, status_pedido, valor_total) VALUES (:id_cliente, :status, :valor_total)');
+        $enderecoExistente = $pdo->prepare("SELECT id_endereco FROM enderecos
+            WHERE id_usuario = :id_usuario AND cep = :cep AND logradouro = :logradouro
+                AND numero = :numero AND COALESCE(complemento, '') = :complemento
+                AND bairro = :bairro AND cidade = :cidade AND estado = :estado
+            LIMIT 1");
+        $enderecoExistente->execute([
+            ':id_usuario' => $idCliente,
+            ':cep' => $cep,
+            ':logradouro' => $logradouro,
+            ':numero' => $numero,
+            ':complemento' => $complemento,
+            ':bairro' => $bairro,
+            ':cidade' => $cidade,
+            ':estado' => $estado,
+        ]);
+        $enderecoSalvo = $enderecoExistente->fetch();
+        if ($enderecoSalvo) {
+            $idEndereco = (int)$enderecoSalvo['id_endereco'];
+        } else {
+            $enderecosExistentes = $pdo->prepare('SELECT id_endereco FROM enderecos WHERE id_usuario = :id_usuario LIMIT 1');
+            $enderecosExistentes->execute([':id_usuario' => $idCliente]);
+            $enderecoPadrao = $enderecosExistentes->fetch() ? 0 : 1;
+            $enderecoStmt = $pdo->prepare('INSERT INTO enderecos
+                (id_usuario, cep, logradouro, numero, complemento, bairro, cidade, estado, endereco_padrao)
+                VALUES (:id_usuario, :cep, :logradouro, :numero, :complemento, :bairro, :cidade, :estado, :endereco_padrao)');
+            $enderecoStmt->execute([
+                ':id_usuario' => $idCliente,
+                ':cep' => $cep,
+                ':logradouro' => $logradouro,
+                ':numero' => $numero,
+                ':complemento' => $complemento !== '' ? $complemento : null,
+                ':bairro' => $bairro,
+                ':cidade' => $cidade,
+                ':estado' => $estado,
+                ':endereco_padrao' => $enderecoPadrao,
+            ]);
+            $idEndereco = (int)$pdo->lastInsertId();
+        }
+
+        $valorTotal = 0.0;
+        $itensConferidos = [];
+        foreach ($itens as $item) {
+            $idReceita = (int)($item['id_receita'] ?? 0);
+            $quantidade = (int)($item['quantidade'] ?? 0);
+            if ($idReceita <= 0 || $quantidade <= 0 || $quantidade > 100) {
+                throw new RuntimeException('Um dos itens do pedido é inválido.');
+            }
+
+            $kitStmt = $pdo->prepare('SELECT k.id_kit, k.preco_kit, k.estoque_disponivel, r.titulo
+                FROM kits_ingredientes k
+                JOIN receitas r ON r.id_receita = k.id_receita
+                WHERE k.id_receita = :id_receita
+                FOR UPDATE');
+            $kitStmt->execute([':id_receita' => $idReceita]);
+            $kit = $kitStmt->fetch();
+            if (!$kit) {
+                throw new RuntimeException('Um dos kits do pedido não está disponível.');
+            }
+            if ((int)$kit['estoque_disponivel'] < $quantidade) {
+                throw new RuntimeException('Estoque insuficiente para o kit ' . $kit['titulo'] . '.');
+            }
+
+            $precoUnitario = (float)$kit['preco_kit'];
+            if ($precoUnitario <= 0) {
+                throw new RuntimeException('O preço do kit ' . $kit['titulo'] . ' está indisponível.');
+            }
+            $valorTotal += $precoUnitario * $quantidade;
+            $itensConferidos[] = [
+                'id_receita' => $idReceita,
+                'id_kit' => (int)$kit['id_kit'],
+                'nome_produto' => 'Kit ' . $kit['titulo'],
+                'quantidade' => $quantidade,
+                'preco_unitario' => $precoUnitario,
+            ];
+
+            $pdo->prepare('UPDATE kits_ingredientes
+                SET estoque_disponivel = estoque_disponivel - :quantidade
+                WHERE id_kit = :id_kit AND estoque_disponivel >= :quantidade_confirmacao')
+                ->execute([
+                    ':quantidade' => $quantidade,
+                    ':id_kit' => (int)$kit['id_kit'],
+                    ':quantidade_confirmacao' => $quantidade,
+                ]);
+        }
+
+        $pedidoStmt = $pdo->prepare('INSERT INTO pedidos
+            (id_cliente, id_endereco, nome_destinatario, observacoes, entrega_cep, entrega_logradouro, entrega_numero,
+             entrega_complemento, entrega_bairro, entrega_cidade, entrega_estado, status_pedido, status_entrega, valor_total)
+            VALUES (:id_cliente, :id_endereco, :nome_destinatario, :observacoes, :cep, :logradouro, :numero,
+                :complemento, :bairro, :cidade, :estado, :status, :status_entrega, :valor_total)');
         $pedidoStmt->execute([
             ':id_cliente' => $idCliente,
-            ':status' => 'pendente',
+            ':id_endereco' => $idEndereco,
+            ':nome_destinatario' => $nomeDestinatario,
+            ':observacoes' => $observacoes !== '' ? $observacoes : null,
+            ':cep' => $cep,
+            ':logradouro' => $logradouro,
+            ':numero' => $numero,
+            ':complemento' => $complemento !== '' ? $complemento : null,
+            ':bairro' => $bairro,
+            ':cidade' => $cidade,
+            ':estado' => $estado,
+            ':status' => 'confirmado',
+            ':status_entrega' => 'aguardando_separacao',
             ':valor_total' => number_format($valorTotal, 2, '.', ''),
         ]);
 
         $idPedido = (int)$pdo->lastInsertId();
 
-        foreach ($itens as $item) {
-            $tipoItem = in_array((string)($item['tipo_item'] ?? 'kit_ingredientes'), ['kit_ingredientes', 'receita'], true)
-                ? (string)$item['tipo_item']
-                : 'kit_ingredientes';
-
-            $pdo->prepare('INSERT INTO itens_pedido (id_pedido, tipo_item, id_referencia, quantidade, preco_unitario)
-                VALUES (:id_pedido, :tipo_item, :id_referencia, :quantidade, :preco_unitario)')
+        foreach ($itensConferidos as $item) {
+            $pdo->prepare('INSERT INTO itens_pedido
+                (id_pedido, tipo_item, id_referencia, id_kit, id_receita, nome_produto, quantidade, preco_unitario)
+                VALUES (:id_pedido, :tipo_item, :id_referencia, :id_kit, :id_receita, :nome_produto, :quantidade, :preco_unitario)')
                 ->execute([
                     ':id_pedido' => $idPedido,
-                    ':tipo_item' => $tipoItem,
-                    ':id_referencia' => (int)($item['id_referencia'] ?? 0),
-                    ':quantidade' => (int)($item['quantidade'] ?? 1),
-                    ':preco_unitario' => number_format((float)($item['preco_unitario'] ?? 0), 2, '.', ''),
+                    ':tipo_item' => 'kit_ingredientes',
+                    ':id_referencia' => $item['id_receita'],
+                    ':id_kit' => $item['id_kit'],
+                    ':id_receita' => $item['id_receita'],
+                    ':nome_produto' => $item['nome_produto'],
+                    ':quantidade' => $item['quantidade'],
+                    ':preco_unitario' => number_format($item['preco_unitario'], 2, '.', ''),
                 ]);
         }
 
+        $pagamento = $pdo->prepare('INSERT INTO pagamentos
+            (id_pedido, metodo, status, valor, provedor, referencia_transacao, bandeira_cartao, ultimos_quatro)
+            VALUES (:id_pedido, :metodo, :status, :valor, :provedor, :referencia, :bandeira, :ultimos_quatro)');
+        $pagamento->execute([
+            ':id_pedido' => $idPedido,
+            ':metodo' => $metodo,
+            ':status' => 'aprovado',
+            ':valor' => number_format($valorTotal, 2, '.', ''),
+            ':provedor' => 'demonstracao',
+            ':referencia' => 'DEMO-' . strtoupper(bin2hex(random_bytes(8))),
+            ':bandeira' => $metodo === 'cartao' ? $bandeiraCartao : null,
+            ':ultimos_quatro' => $metodo === 'cartao' ? $ultimosQuatro : null,
+        ]);
+
         $pdo->commit();
-        jsonReply(true, 'Pedido registrado com sucesso.', ['id_pedido' => $idPedido, 'valor_total' => $valorTotal]);
+        jsonReply(true, 'Pedido de demonstração registrado com sucesso.', [
+            'id_pedido' => $idPedido,
+            'valor_total' => $valorTotal,
+            'status_pagamento' => 'aprovado',
+            'status_entrega' => 'aguardando_separacao',
+        ]);
     } catch (Throwable $e) {
-        $pdo->rollBack();
-        jsonReply(false, 'Erro ao registrar pedido: ' . $e->getMessage(), null, 500);
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        $status = $e instanceof PDOException ? 500 : 400;
+        jsonReply(false, 'Erro ao registrar pedido: ' . $e->getMessage(), null, $status);
     }
 }
 
@@ -515,7 +648,7 @@ if ($action === 'receitas') {
             'nivel_dificuldade' => $receita['nivel_dificuldade'],
             'tipo_acesso' => $receita['tipo_acesso'],
             'preco_conteudo' => (float)($receita['preco_conteudo'] ?? 0),
-            'img' => $receita['img'] ?: 'img/pastel.jpg',
+            'img' => $receita['img'] ?: 'img/pastel.png',
             'pais' => $receita['pais'],
             'nota' => (float)($receita['nota'] ?? 0),
             'avaliacoes' => (int)($receita['avaliacoes'] ?? 0),

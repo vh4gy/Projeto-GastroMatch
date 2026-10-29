@@ -13,7 +13,7 @@
 
 const receitasBase = [
   {
-    id_receita: 2, titulo: 'Poutine', pais: 'ca', img: 'img/poutine.jpg',
+    id_receita: 2, titulo: 'Poutine', pais: 'ca', img: 'img/poutine.png',
     nota: 4.0, avaliacoes: '67', nivel_dificuldade: 'facil', tempo_preparo_minutos: 20,
     rendimento: 4, tipo_acesso: 'gratuito', preco_conteudo: 0,
     preco_kit: 25.99, estoque_disponivel: 20,
@@ -29,7 +29,7 @@ const receitasBase = [
     ]
   },
   {
-    id_receita: 3, titulo: 'Carbonara', pais: 'it', img: 'img/carbonara.jpg',
+    id_receita: 3, titulo: 'Carbonara', pais: 'it', img: 'img/carbonara.png',
     nota: 4.0, avaliacoes: '99+', nivel_dificuldade: 'facil', tempo_preparo_minutos: 20,
     rendimento: 2, tipo_acesso: 'gratuito', preco_conteudo: 0,
     preco_kit: 11.99, estoque_disponivel: 20,
@@ -45,7 +45,7 @@ const receitasBase = [
     ]
   },
   {
-    id_receita: 1, titulo: 'Pastel de Queijo com Molho Vinagrete', pais: 'br', img: 'img/pastel.jpg',
+    id_receita: 1, titulo: 'Pastel de Queijo com Molho Vinagrete', pais: 'br', img: 'img/pastel.png',
     nota: 4.9, avaliacoes: '85', nivel_dificuldade: 'medio', tempo_preparo_minutos: 45,
     rendimento: 8, tipo_acesso: 'gratuito', preco_conteudo: 0,
     preco_kit: 14.89, estoque_disponivel: 20,
@@ -60,7 +60,7 @@ const receitasBase = [
     ]
   },
   {
-    id_receita: 4, titulo: 'Tacos', pais: 'mx', img: 'img/tacos.jpg',
+    id_receita: 4, titulo: 'Tacos', pais: 'mx', img: 'img/tacos.png',
     nota: 4.7, avaliacoes: '52', nivel_dificuldade: 'facil', tempo_preparo_minutos: 25,
     rendimento: 4, tipo_acesso: 'gratuito', preco_conteudo: 0,
     preco_kit: 19.90, estoque_disponivel: 20,
@@ -75,7 +75,7 @@ const receitasBase = [
     ]
   },
   {
-    id_receita: 5, titulo: 'Camarão Empanado', pais: '', img: 'img/camarao.jpg',
+    id_receita: 5, titulo: 'Camarão Empanado', pais: '', img: 'img/camarao.png',
     nota: 4.5, avaliacoes: '38', nivel_dificuldade: 'medio', tempo_preparo_minutos: 30,
     rendimento: 4, tipo_acesso: 'gratuito', preco_conteudo: 0,
     preco_kit: 32.90, estoque_disponivel: 20,
@@ -228,7 +228,7 @@ function normalizarReceitaAPI(receita) {
     ingredientes: parseArray(receita.ingredientes),
     preparo: parseArray(receita.preparo),
     criado_pelo_chef: Boolean(receita.criado_pelo_chef ?? true),
-    img: receita.img || 'img/pastel.jpg',
+    img: receita.img || 'img/pastel.png',
     tipo_acesso: receita.tipo_acesso || 'gratuito'
   };
 }
@@ -355,19 +355,28 @@ async function confirmarPagamento(event) {
   const form = event.currentTarget;
   const metodo = form.querySelector('input[name="metodo_pagamento"]:checked')?.value || 'pix';
   const itens = cesta.map(i => {
-    const r = achar(i.id);
     return {
-      tipo_item: 'kit_ingredientes', id_referencia: i.id, quantidade: i.qtd,
-      preco_unitario: r ? r.preco_kit : 0
+      id_receita: i.id,
+      quantidade: i.qtd
     };
-  }).filter(item => item.id_referencia && item.preco_unitario > 0);
+  }).filter(item => item.id_receita && item.quantidade > 0);
 
   const pedido = {
     id_cliente: perfilAtual.id_usuario,
-    data_pedido: new Date().toISOString(),
-    status_pedido: 'pendente',
-    valor_total: itens.reduce((s, i) => s + i.quantidade * i.preco_unitario, 0),
     metodo_pagamento: metodo,
+    nome_destinatario: form.elements.nome_pagador.value.trim(),
+    observacoes: form.elements.observacoes.value.trim(),
+    endereco: {
+      cep: form.elements.endereco_cep.value,
+      logradouro: form.elements.endereco_logradouro.value.trim(),
+      numero: form.elements.endereco_numero.value.trim(),
+      complemento: form.elements.endereco_complemento.value.trim(),
+      bairro: form.elements.endereco_bairro.value.trim(),
+      cidade: form.elements.endereco_cidade.value.trim(),
+      estado: form.elements.endereco_estado.value.trim()
+    },
+    cartao_bandeira: form.elements.cartao_bandeira?.value || '',
+    cartao_ultimos4: form.elements.cartao_ultimos4?.value || '',
     itens
   };
 
@@ -383,11 +392,10 @@ async function confirmarPagamento(event) {
       throw new Error(payload.message || 'Não foi possível registrar o pedido no banco.');
     }
 
-    cesta = []; salvarCesta(); toast('Pagamento confirmado com sucesso!'); location.hash = '#inicio';
+    cesta = []; salvarCesta(); toast(`Pedido #${payload.data.id_pedido} registrado no modo demonstração.`); location.hash = '#inicio';
     return;
   } catch (erro) {
-    console.log('Pedido simulado:', pedido);
-    cesta = []; salvarCesta(); toast(erro.message || 'Pagamento confirmado! (simulação)'); location.hash = '#inicio';
+    toast(erro.message || 'Não foi possível registrar o pedido. O carrinho foi mantido.');
   }
 }
 
@@ -586,8 +594,14 @@ const telas = {
 
           <div class="form-grid">
             <label class="campo campo-span"><span>Nome do pagador</span><input name="nome_pagador" type="text" value="${esc(perfilAtual.nome || 'Cliente GastroMatch')}" required></label>
-            <label class="campo campo-span"><span>CPF / CNPJ</span><input name="documento" type="text" placeholder="000.000.000-00" required></label>
-            <label class="campo campo-span"><span>Observações</span><textarea name="observacoes" rows="3" placeholder="Instruções adicionais, endereço de entrega ou comentário"></textarea></label>
+            <label class="campo"><span>CEP</span><input name="endereco_cep" type="text" inputmode="numeric" maxlength="9" placeholder="00000-000" required></label>
+            <label class="campo"><span>Estado (UF)</span><input name="endereco_estado" type="text" maxlength="2" placeholder="SP" required></label>
+            <label class="campo campo-span"><span>Logradouro</span><input name="endereco_logradouro" type="text" maxlength="150" placeholder="Rua ou avenida" required></label>
+            <label class="campo"><span>Número</span><input name="endereco_numero" type="text" maxlength="20" required></label>
+            <label class="campo"><span>Complemento (opcional)</span><input name="endereco_complemento" type="text" maxlength="100"></label>
+            <label class="campo"><span>Bairro</span><input name="endereco_bairro" type="text" maxlength="100" required></label>
+            <label class="campo"><span>Cidade</span><input name="endereco_cidade" type="text" maxlength="100" required></label>
+            <label class="campo campo-span"><span>Observações do pedido (opcional)</span><textarea name="observacoes" rows="3" maxlength="2000" placeholder="Instruções para entrega ou preparo"></textarea></label>
           </div>
 
           <div class="payment-extra">
@@ -597,12 +611,22 @@ const telas = {
               <small>Pagamento instantâneo e confirmado em minutos.</small>
             </div>
             <div class="payment-box cartao-box" hidden>
-              <strong>Cartão</strong>
+              <strong>Cartão de demonstração</strong>
               <div class="form-grid">
-                <label class="campo campo-span"><span>Número do cartão</span><input type="text" inputmode="numeric" placeholder="1234 5678 9012 3456"></label>
-                <label class="campo"><span>Validade</span><input type="text" placeholder="MM/AA"></label>
-                <label class="campo"><span>CVV</span><input type="text" inputmode="numeric" placeholder="123"></label>
+                <label class="campo"><span>Bandeira</span>
+                  <select name="cartao_bandeira">
+                    <option value="">Selecione</option>
+                    <option value="visa">Visa</option>
+                    <option value="mastercard">Mastercard</option>
+                    <option value="elo">Elo</option>
+                    <option value="amex">American Express</option>
+                    <option value="hipercard">Hipercard</option>
+                    <option value="outro">Outra</option>
+                  </select>
+                </label>
+                <label class="campo"><span>Últimos 4 dígitos (fictícios)</span><input name="cartao_ultimos4" type="text" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="1234"></label>
               </div>
+              <small>Protótipo: não informe número completo, validade ou código de segurança. Nenhum dado real de cartão é processado.</small>
             </div>
             <div class="payment-box boleto-box" hidden>
               <strong>Boleto Bancário</strong>
@@ -788,7 +812,7 @@ function coletarFormularioReceita() {
     oferecer_kit: Boolean(dados.get('oferecer_kit')),
     preco_kit: Number(dados.get('preco_kit')||0),
     estoque_disponivel: Number(dados.get('estoque_disponivel')||0),
-    img: fotoAtual || 'img/pastel.jpg'
+    img: fotoAtual || 'img/pastel.png'
   };
 }
 
@@ -910,6 +934,10 @@ function atualizarMetodoPagamento() {
   document.querySelectorAll('.payment-box').forEach(box => {
     const show = box.classList.contains(`${selected}-box`);
     box.hidden = !show;
+    box.querySelectorAll('input, select').forEach(field => {
+      field.disabled = !show;
+      field.required = show && field.name.startsWith('cartao_');
+    });
   });
 }
 

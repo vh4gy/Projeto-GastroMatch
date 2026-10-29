@@ -18,22 +18,9 @@ function validarEmailReal(email) {
   return /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(String(email || '').trim());
 }
 
-function validarCnpjReal(cnpj) {
+function validarCnpjFormato(cnpj) {
   const valor = String(cnpj || '').replace(/\D/g, '');
-  if (valor.length !== 14 || /^\d{14}$/.test(valor) && /^(\d)\1{13}$/.test(valor)) return false;
-
-  const pesos1 = [5,4,3,2,9,8,7,6,5,4,3,2];
-  const pesos2 = [6,5,4,3,2,9,8,7,6,5,4,3,2];
-
-  let soma = 0;
-  for (let i = 0; i < 12; i++) soma += Number(valor[i]) * pesos1[i];
-  let dig1 = soma % 11 < 2 ? 0 : 11 - (soma % 11);
-  if (Number(valor[12]) !== dig1) return false;
-
-  soma = 0;
-  for (let i = 0; i < 13; i++) soma += Number(valor[i]) * pesos2[i];
-  let dig2 = soma % 11 < 2 ? 0 : 11 - (soma % 11);
-  return Number(valor[13]) === dig2;
+  return valor.length === 14;
 }
 
 function formatarCnpj(valor) {
@@ -106,34 +93,47 @@ function salvarSessao(dados, role){
   }
 }
 
-async function autenticarNoBanco(email, password, codigoVerificacao = '') {
-  const resposta = await fetch('api.php?action=login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password, codigo_verificacao: codigoVerificacao })
-  });
+async function enviarRequisicaoApi(action, dados, mensagemFalha) {
+  if (window.location.protocol === 'file:') {
+    throw new Error('O projeto foi aberto diretamente como arquivo. Inicie o Apache no XAMPP e acesse http://localhost:8090/Projeto-GastroMatch/login.html para que o PHP e o banco funcionem.');
+  }
 
-  const payload = await resposta.json().catch(() => ({ success: false, message: 'Não foi possível conectar ao banco.' }));
+  const url = new URL(`api.php?action=${encodeURIComponent(action)}`, window.location.href);
+  let resposta;
+  try {
+    resposta = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(dados)
+    });
+  } catch {
+    throw new Error(`Não foi possível acessar a API PHP em ${url}. Abra o projeto pelo Apache em http://localhost:8090/Projeto-GastroMatch/login.html, não por file://, e confira se o Apache está ativo.`);
+  }
+
+  let payload;
+  try {
+    payload = await resposta.json();
+  } catch {
+    throw new Error(`A API em ${resposta.url} respondeu sem JSON (HTTP ${resposta.status}). Confira se o caminho aponta para api.php e se o PHP está ativo.`);
+  }
+
   if (!resposta.ok || !payload.success) {
-    throw new Error(payload.message || 'Erro ao autenticar no banco.');
+    throw new Error(payload.message || mensagemFalha);
   }
 
   return payload.data.user;
 }
 
+async function autenticarNoBanco(email, password, codigoVerificacao = '') {
+  return enviarRequisicaoApi('login', { email, password, codigo_verificacao: codigoVerificacao }, 'Erro ao autenticar no banco.');
+}
+
+async function autenticarPorCodigo(role, code) {
+  return enviarRequisicaoApi('login', { role, code }, 'Código de demonstração inválido.');
+}
+
 async function criarContaNoBanco(dados) {
-  const resposta = await fetch('api.php?action=register', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(dados)
-  });
-
-  const payload = await resposta.json().catch(() => ({ success: false, message: 'Não foi possível criar a conta.' }));
-  if (!resposta.ok || !payload.success) {
-    throw new Error(payload.message || 'Não foi possível criar a conta.');
-  }
-
-  return payload.data.user;
+  return enviarRequisicaoApi('register', dados, 'Não foi possível criar a conta.');
 }
 
 async function entrar(e){
@@ -142,15 +142,26 @@ async function entrar(e){
   const email = $('#loginEmail').value.trim();
   const senha = $('#loginPassword').value;
   const codigoVerificacao = $('#codigoVerificacao')?.value.trim() || '';
+  const codigoAcesso = $('#codigoAcesso').value.trim();
+  const codigoDemo = Object.keys(ACESSOS).find(role => ACESSOS[role].code === codigoAcesso.toUpperCase());
+  const perfilCodigo = codigoDemo || roleSelecionado;
 
-  if (!email || !senha) {
-    msg.textContent = 'Use e-mail e senha para entrar no sistema do MySQL/XAMPP.';
+  if (!codigoAcesso && (!email || !senha)) {
+    msg.textContent = 'Informe e-mail e senha ou selecione um perfil e use um código de demonstração.';
     msg.className = 'login-msg erro';
     return;
   }
 
   try {
-    const usuario = await autenticarNoBanco(email, senha, codigoVerificacao);
+    if (codigoAcesso && !perfilCodigo) {
+      msg.textContent = 'Selecione o perfil correspondente ao código de demonstração.';
+      msg.className = 'login-msg erro';
+      return;
+    }
+
+    const usuario = codigoAcesso
+      ? await autenticarPorCodigo(perfilCodigo, codigoAcesso)
+      : await autenticarNoBanco(email, senha, codigoVerificacao);
     const tipo = usuario.tipo_usuario || 'cliente';
     const redirect = tipo === 'chef' ? 'index.html#chef' : tipo === 'restaurante' ? 'index.html#chef' : tipo === 'admin' ? 'AreaRestrita/painel.html' : 'index.html#inicio';
     salvarSessao({ idUsuario: Number(usuario.id_usuario || 0), label: usuario.nome || 'Usuário', email: usuario.email, tipoUsuario: tipo }, tipo);
@@ -198,8 +209,8 @@ async function criarConta(e){
     return;
   }
   if (['chef', 'restaurante'].includes(tipo)) {
-    if (!validarCnpjReal(cnpj)) {
-      msg.textContent = 'Informe um CNPJ válido para chef ou restaurante.';
+    if (!validarCnpjFormato(cnpj)) {
+      msg.textContent = 'Informe 14 dígitos para o CNPJ. A consulta de autenticidade será feita pela API quando integrada.';
       msg.className = 'login-msg erro';
       return;
     }
@@ -248,9 +259,6 @@ function atualizarCamposRegistro() {
   const tipo = $('#registroTipo')?.value || 'cliente';
   const campoCnpj = $('#campoCnpj');
   if (campoCnpj) campoCnpj.hidden = !['chef', 'restaurante'].includes(tipo);
-  if (!['chef', 'restaurante'].includes(tipo)) {
-    $('#registroCnpj').value = '';
-  }
 }
 
 $('#registroTipo')?.addEventListener('change', atualizarCamposRegistro);

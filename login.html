@@ -19,7 +19,7 @@
         <span class="eyebrow">uma experiência gastronômica completa</span>
         <h1>Descubra sabores.<br><em>Conecte-se.</em><br>Cozinhe.</h1>
         <p>Entre como cliente, chef ou administrador e acesse a área certa da plataforma.</p>
-        <div class="visual-pills"><span>🍳 Receitas</span><span>🎥 Videoaulas</span><span>🛒 Kits</span><span>💬 Comunidade</span></div>
+        <div class="visual-pills"><span>🍳 Receitas</span><span>🎥 Vídeo-aulas</span><span>🛒 Kits</span><span>💬 Comunidade</span></div>
       </div>
     </section>
 
@@ -74,7 +74,7 @@
               <div class="input-wrap"><input id="codigoAcesso" type="password" inputmode="text" maxlength="40" placeholder="Ex.: GM-CLI-2026"><button type="button" id="toggleCode" class="toggle-code" aria-label="Mostrar código">Mostrar</button></div>
             </label>
             <div id="selectedRole" class="selected-role" hidden></div>
-            <button class="primary-btn" type="submit" id="entrarBtn">Entrar com e-mail</button>
+            <button class="primary-btn" type="submit" id="entrarBtn">Entrar com e-mail ou código</button>
             <p id="loginMsg" class="login-msg" role="alert" aria-live="polite"></p>
           </form>
         </div>
@@ -100,6 +100,7 @@
             <label class="campo campo-cnpj" id="campoCnpj" hidden>
               <span>CNPJ da empresa / perfil</span>
               <input id="registroCnpj" type="text" inputmode="numeric" maxlength="18" placeholder="00.000.000/0000-00">
+              <small class="campo-ajuda">Para demonstração, informe 14 dígitos. A verificação de autenticidade poderá ser integrada por API.</small>
             </label>
             <label class="checkline">
               <input id="registroVerificacao" type="checkbox" checked>
@@ -118,9 +119,14 @@
           </form>
         </div>
 
-        <details class="demo-access" hidden>
-          <summary>Modo demo</summary>
-          <small>O login real do sistema usa o banco MySQL do XAMPP e os dados cadastrados no banco.</small>
+        <details class="demo-access" open>
+          <summary>Códigos de demonstração (sem e-mail ou senha)</summary>
+          <div class="demo-lines">
+            <button type="button" data-demo-role="cliente"><span>Cliente</span><code>GM-CLI-2026</code></button>
+            <button type="button" data-demo-role="chef"><span>Chef / Criador</span><code>GM-CHEF-2026</code></button>
+            <button type="button" data-demo-role="admin"><span>Administrador</span><code>GM-ADM-2026</code></button>
+          </div>
+          <small>Clique em um código ou digite-o para entrar sem preencher e-mail, nome de usuário ou senha. O login tradicional continua disponível.</small>
         </details>
       </div>
 

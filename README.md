@@ -20,13 +20,15 @@ A proposta principal é aproximar o usuário da experiência profissional da coz
 ## Funcionalidades principais
 
 - Login com e-mail e senha consultando o banco
-- cadastro com validação de e-mail e CNPJ
+- cadastro com validação de e-mail e conferência do formato do CNPJ
 - verificação em duas etapas opcional
 - painel de perfil com dados vindos do banco
 - criação e listagem de receitas
 - filtros por dificuldade, tempo e restrição alimentar
 - compra de kits de ingredientes
-- fluxo de checkout e registro de pedidos
+- checkout com endereço, observações, itens e status de entrega
+- pagamento simulado com registro de status e metadados não sensíveis de cartão
+- controle de estoque dos kits durante a criação do pedido
 - persistência em banco de dados MySQL
 
 ## Estrutura do projeto
@@ -35,6 +37,8 @@ A proposta principal é aproximar o usuário da experiência profissional da coz
 - [login.html](login.html) — página de acesso, login e cadastro
 - [api.php](api.php) — API em PHP com integração ao MySQL
 - [Banco de dados/banco.sql](Banco%20de%20dados/banco.sql) — estrutura do banco e dados iniciais
+- [Banco de dados/migracao_compras.sql](Banco%20de%20dados/migracao_compras.sql) — migração incremental do checkout
+- [Banco de dados/migracao_imagens_png.sql](Banco%20de%20dados/migracao_imagens_png.sql) — atualização das imagens cadastradas para PNG
 - [Codigo/codigo.js](Codigo/codigo.js) — lógica principal do site
 - [Codigo/login.js](Codigo/login.js) — autenticação e cadastro
 - [Estilo/estilo.css](Estilo/estilo.css) — estilos gerais
@@ -58,7 +62,9 @@ O banco contém as tabelas principais:
 - receitas_restricoes
 - videoaulas
 - kits_ingredientes
+- enderecos
 - pedidos
+- pagamentos
 - itens_pedido
 
 Essas tabelas sustentam o cadastro, autenticação, criação de receitas, kits e pedidos.
@@ -67,7 +73,7 @@ Essas tabelas sustentam o cadastro, autenticação, criação de receitas, kits 
 O sistema realiza:
 
 - validação de e-mail
-- validação de CNPJ para chef/restaurante
+- campo de CNPJ para chef/restaurante (14 dígitos; autenticidade fica pendente de integração com API)
 - login com e-mail e senha consultando a tabela `usuarios`
 - verificação em duas etapas opcional
 - sessão do usuário em `sessionStorage`
@@ -91,25 +97,51 @@ Abra o XAMPP e ative:
 2. Crie o banco `gastromatch`
 3. Importe o arquivo [Banco de dados/banco.sql](Banco%20de%20dados/banco.sql)
 
+Se o banco já existe e contém dados, **não reimporte** o arquivo de instalação. Execute uma vez [Banco de dados/migracao_compras.sql](Banco%20de%20dados/migracao_compras.sql) pelo phpMyAdmin para adicionar os campos e relações do checkout sem apagar os registros existentes.
+
+Para atualizar as imagens das receitas em um banco existente, execute também uma vez [Banco de dados/migracao_imagens_png.sql](Banco%20de%20dados/migracao_imagens_png.sql) pelo phpMyAdmin.
+
+O arquivo de migração usa comandos `ALTER TABLE` compatíveis com MySQL/MariaDB sem `ADD COLUMN IF NOT EXISTS`, que não está disponível em todas as versões. Execute-o uma única vez em cada cópia existente do banco. Para duas pessoas trabalhando em máquinas diferentes, cada uma aplica a mesma migração ao seu banco local; isso sincroniza o esquema, mas não sincroniza os dados. Compartilhar dados entre máquinas exige configurar um único servidor MySQL acessível a ambas.
+
 ### Passo 3: colocar o projeto na pasta do servidor
 Copie a pasta do projeto para:
 
-`C:\xampp\htdocs\GastroMatch`
+`C:\xampp\htdocs\Projeto-GastroMatch`
 
 ### Passo 4: acessar as páginas
 Abra no navegador:
 
-- http://localhost:8088/GastroMatch/login.html
-- http://localhost:8088/GastroMatch/index.html
+- http://localhost:8090/Projeto-GastroMatch/login.html
+- http://localhost:8090/Projeto-GastroMatch/index.html
+
+Abra as páginas pelo Apache, usando o endereço HTTP acima; não abra os arquivos HTML diretamente pelo explorador (`file://`). A porta 8090 é do Apache. O MySQL usa uma porta própria, normalmente 3306 no XAMPP.
 
 ## Usuários iniciais do banco
 
 Os dados do banco podem ser acessados após a importação do script SQL. O sistema usa autenticação real, então a criação e login são feitos como usuários cadastrados na tabela `usuarios`.
 
+### Códigos de demonstração
+
+Na tela de login, selecione o perfil correspondente e use um dos códigos abaixo. Eles funcionam sem informar e-mail, nome de usuário ou senha:
+
+- Cliente: `GM-CLI-2026`
+- Chef / Criador: `GM-CHEF-2026`
+- Administrador: `GM-ADM-2026`
+
+### Verificação de CNPJ
+
+No cadastro de chef/restaurante, o CNPJ deve ter 14 dígitos, mas não precisa passar pelo cálculo dos dígitos verificadores para permitir demonstrações. A tabela `usuarios` já possui `cnpj_validado` e `cnpj_validado_em` para registrar futuramente o resultado e a data de uma consulta a uma API. Novos cadastros ficam pendentes (`cnpj_validado = 0`) até essa integração.
+
+### Pedidos e pagamentos demonstrativos
+
+O checkout salva o endereço do cliente, uma cópia dos dados de entrega no pedido, as observações, os itens com preço e nome registrados no momento da compra, a forma/status do pagamento e o status de entrega. O estoque do kit e o preço são conferidos no servidor e o estoque é atualizado junto com o pedido.
+
+O pagamento é apenas simulado. No caso de cartão, o protótipo aceita somente bandeira e quatro dígitos fictícios para demonstração; nunca solicita nem armazena número completo, validade ou CVV. Não use dados reais de cartão.
+
 ## Validações de segurança implementadas
 
 - e-mail com domínio válido
-- CNPJ real para chef/restaurante
+- formato de 14 dígitos do CNPJ para chef/restaurante
 - validação do tipo de conta
 - prevenção de cadastro duplicado
 - senha mínima de 6 caracteres
