@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Open+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="Estilo/login.css">
+  <link rel="stylesheet" href="Estilo/login.css?v=20261030-1">
 </head>
 <body>
   <main class="login-page">
@@ -100,8 +100,13 @@
             <label class="campo campo-cnpj" id="campoCnpj" hidden>
               <span>CNPJ da empresa / perfil</span>
               <input id="registroCnpj" type="text" inputmode="numeric" maxlength="18" placeholder="00.000.000/0000-00">
-              <small class="campo-ajuda">Para demonstração, informe 14 dígitos. A verificação de autenticidade poderá ser integrada por API.</small>
+              <small class="campo-ajuda">O CNPJ identifica a empresa, mas não aprova o perfil. A equipe fará a análise profissional.</small>
             </label>
+            <div id="camposVerificacaoChef" hidden>
+              <label class="campo"><span>Empresa ou estabelecimento</span><input id="registroEmpresa" type="text" maxlength="150" placeholder="Nome da empresa"></label>
+              <label class="campo"><span>Conte sua experiência profissional</span><textarea id="registroRelato" rows="4" maxlength="3000" minlength="40" placeholder="Descreva sua função, experiência e relação com a empresa..."></textarea><small class="campo-ajuda">Mínimo de 40 caracteres. O relato será analisado por uma pessoa da equipe.</small></label>
+              <label class="campo"><span>Link de portfólio ou evidência (opcional)</span><input id="registroEvidencia" type="url" maxlength="500" placeholder="https://..."></label>
+            </div>
             <label class="checkline">
               <input id="registroVerificacao" type="checkbox" checked>
               <span>Exigir verificação em duas etapas por e-mail</span>
@@ -124,7 +129,6 @@
           <div class="demo-lines">
             <button type="button" data-demo-role="cliente"><span>Cliente</span><code>GM-CLI-2026</code></button>
             <button type="button" data-demo-role="chef"><span>Chef / Criador</span><code>GM-CHEF-2026</code></button>
-            <button type="button" data-demo-role="admin"><span>Administrador</span><code>GM-ADM-2026</code></button>
           </div>
           <small>Clique em um código ou digite-o para entrar sem preencher e-mail, nome de usuário ou senha. O login tradicional continua disponível.</small>
         </details>
@@ -133,6 +137,6 @@
       <footer>Projeto acadêmico • GastroMatch • Login demonstrativo</footer>
     </section>
   </main>
-  <script src="Codigo/login.js"></script>
+  <script src="Codigo/login.js?v=20261030-1"></script>
 </body>
 </html>

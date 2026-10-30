@@ -9,7 +9,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit;
 }
 
+session_set_cookie_params([
+    'lifetime' => 0,
+    'path' => '/',
+    'secure' => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
+    'httponly' => true,
+    'samesite' => 'Lax',
+]);
+session_start();
+
 $dbHost = getenv('DB_HOST') ?: '127.0.0.1';
+$dbPort = getenv('DB_PORT') ?: '3306';
 $dbName = getenv('DB_NAME') ?: 'gastromatch';
 $dbUser = getenv('DB_USER') ?: 'root';
 $dbPass = getenv('DB_PASS') ?: '';
@@ -23,6 +33,25 @@ function jsonReply(bool $success, string $message = '', $data = null, int $statu
         'data' => $data,
     ]);
     exit;
+}
+
+function normalizeRecipeImagePath(string $path): string
+{
+    $legacyPaths = [
+        'img/pastel.jpg' => 'img/pastel.png',
+        'img/poutine.jpg' => 'img/poutine.png',
+        'img/tacos.jpg' => 'img/tacos.png',
+        'img/carbonara.jpg' => 'img/carbonara.png',
+        'img/camarao.jpg' => 'img/camarao.png',
+    ];
+
+    return $legacyPaths[$path] ?? ($path !== '' ? $path : 'img/pastel.png');
+}
+
+function iniciarSessaoUsuario(int $idUsuario): void
+{
+    session_regenerate_id(true);
+    $_SESSION['user_id'] = $idUsuario;
 }
 
 function emailLooksValid(string $email): bool
@@ -49,6 +78,52 @@ function cnpjHasValidFormat(string $cnpj): bool
 {
     $cnpj = preg_replace('/\D+/', '', $cnpj);
     return strlen($cnpj) === 14;
+}
+
+function cpfHasValidChecksum(string $cpf): bool
+{
+    $cpf = preg_replace('/\D+/', '', $cpf);
+    if (strlen($cpf) !== 11 || preg_match('/^(\d)\1{10}$/', $cpf)) {
+        return false;
+    }
+
+    for ($position = 9; $position <= 10; $position++) {
+        $sum = 0;
+        for ($index = 0; $index < $position; $index++) {
+            $sum += (int)$cpf[$index] * (($position + 1) - $index);
+        }
+        $digit = ($sum * 10) % 11;
+        $digit = $digit === 10 ? 0 : $digit;
+        if ($digit !== (int)$cpf[$position]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function currentDatabaseUser(PDO $pdo): ?array
+{
+    $idUsuario = (int)($_SESSION['user_id'] ?? 0);
+    if ($idUsuario < 1) {
+        return null;
+    }
+
+    $stmt = $pdo->prepare('SELECT id_usuario, nome, email, tipo_usuario FROM usuarios WHERE id_usuario = :id AND ativo = 1 LIMIT 1');
+    $stmt->execute([':id' => $idUsuario]);
+    return $stmt->fetch() ?: null;
+}
+
+function evidenceUrlIsValid(string $url): bool
+{
+    if ($url === '') {
+        return true;
+    }
+
+    $parts = parse_url($url);
+    return is_array($parts)
+        && in_array(strtolower((string)($parts['scheme'] ?? '')), ['http', 'https'], true)
+        && !empty($parts['host']);
 }
 
 function externalEmailCheck(string $email): array
@@ -84,16 +159,26 @@ function externalEmailCheck(string $email): array
     return ['valid' => (bool)($json['valid'] ?? false), 'source' => 'external', 'message' => (string)($json['message'] ?? 'Email verificado pela API externa.')];
 }
 
+$action = $_GET['action'] ?? ($_POST['action'] ?? 'status');
+
+if ($action === 'logout') {
+    $_SESSION = [];
+    if (ini_get('session.use_cookies')) {
+        $cookie = session_get_cookie_params();
+        setcookie(session_name(), '', time() - 42000, $cookie['path'], $cookie['domain'], $cookie['secure'], $cookie['httponly']);
+    }
+    session_destroy();
+    jsonReply(true, 'Sessão encerrada.');
+}
+
 try {
-    $pdo = new PDO("mysql:host={$dbHost};dbname={$dbName};charset=utf8mb4", $dbUser, $dbPass, [
+    $pdo = new PDO("mysql:host={$dbHost};port={$dbPort};dbname={$dbName};charset=utf8mb4", $dbUser, $dbPass, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
     ]);
 } catch (Throwable $e) {
     jsonReply(false, 'MySQL indisponível: ' . $e->getMessage(), null, 500);
 }
-
-$action = $_GET['action'] ?? ($_POST['action'] ?? 'status');
 
 if ($action === 'status') {
     jsonReply(true, 'API do GastroMatch conectada ao MySQL.', ['database' => $dbName]);
@@ -106,6 +191,9 @@ if ($action === 'register') {
     $senha = (string)($input['password'] ?? '');
     $tipo = strtolower(trim((string)($input['tipo_usuario'] ?? 'cliente')));
     $cnpj = preg_replace('/\D+/', '', (string)($input['cnpj'] ?? ''));
+    $empresa = trim((string)($input['empresa'] ?? ''));
+    $relatoProfissional = trim((string)($input['relato_profissional'] ?? ''));
+    $linkEvidencia = trim((string)($input['link_evidencia'] ?? ''));
     $verificacao2fa = (int)($input['verificacao_2fa'] ?? 1);
     $verificacao2fa = in_array($verificacao2fa, [0, 1], true) ? $verificacao2fa : 1;
 
@@ -128,6 +216,14 @@ if ($action === 'register') {
 
     if (in_array($tipo, ['chef', 'restaurante'], true) && !cnpjHasValidFormat($cnpj)) {
         jsonReply(false, 'Informe um CNPJ com 14 dígitos.', null, 400);
+    }
+
+    if (in_array($tipo, ['chef', 'restaurante'], true)
+        && ($empresa === '' || strlen($empresa) > 150 || mb_strlen($relatoProfissional) < 40 || mb_strlen($relatoProfissional) > 3000)) {
+        jsonReply(false, 'Informe a empresa e descreva sua experiência profissional em pelo menos 40 caracteres.', null, 400);
+    }
+    if (strlen($linkEvidencia) > 500 || !evidenceUrlIsValid($linkEvidencia)) {
+        jsonReply(false, 'Informe um link de evidência válido, usando HTTP ou HTTPS.', null, 400);
     }
 
     $check = $pdo->prepare('SELECT id_usuario FROM usuarios WHERE email = :email LIMIT 1');
@@ -161,6 +257,10 @@ if ($action === 'register') {
 
     $idUsuario = (int)$pdo->lastInsertId();
 
+    if ($verificacao2fa === 0) {
+        iniciarSessaoUsuario($idUsuario);
+    }
+
     if (in_array($tipo, ['chef', 'restaurante'], true)) {
         $pdo->prepare('INSERT INTO perfis_criadores (id_usuario, biografia, link_portfolio, status_validacao)
             VALUES (:id_usuario, :biografia, :link_portfolio, :status_validacao)')
@@ -169,6 +269,15 @@ if ($action === 'register') {
                 ':biografia' => 'Perfil em análise na plataforma.',
                 ':link_portfolio' => '',
                 ':status_validacao' => 'pendente',
+            ]);
+        $pdo->prepare('INSERT INTO verificacoes_criadores (id_usuario, empresa, cnpj, relato_profissional, link_evidencia)
+            VALUES (:id_usuario, :empresa, :cnpj, :relato, :link)')
+            ->execute([
+                ':id_usuario' => $idUsuario,
+                ':empresa' => $empresa,
+                ':cnpj' => $cnpj,
+                ':relato' => $relatoProfissional,
+                ':link' => $linkEvidencia !== '' ? $linkEvidencia : null,
             ]);
     }
 
@@ -222,6 +331,7 @@ if ($action === 'login') {
             }
         }
 
+        iniciarSessaoUsuario((int)$usuario['id_usuario']);
         unset($usuario['senha_hash']);
         jsonReply(true, 'Login realizado com sucesso.', ['user' => $usuario]);
     }
@@ -231,6 +341,10 @@ if ($action === 'login') {
 
     if ($role === '' || $code === '') {
         jsonReply(false, 'Perfil e código são obrigatórios.', null, 400);
+    }
+
+    if ($role === 'admin') {
+        jsonReply(false, 'Administradores devem entrar com e-mail e senha privados.', null, 403);
     }
 
     $user = $pdo->prepare('SELECT u.*, p.biografia, p.link_portfolio, p.status_validacao
@@ -245,24 +359,285 @@ if ($action === 'login') {
         jsonReply(false, 'Código inválido para o perfil selecionado.', null, 401);
     }
 
+    iniciarSessaoUsuario((int)$usuario['id_usuario']);
     $usuario['tipo_usuario'] = $usuario['tipo_usuario'] ?? $role;
     unset($usuario['senha_hash']);
 
     jsonReply(true, 'Login realizado com sucesso.', ['user' => $usuario]);
 }
 
+if ($action === 'avaliacoes') {
+    $idReceita = (int)($_GET['id_receita'] ?? 0);
+    if ($idReceita < 1) {
+        jsonReply(false, 'Identificador da receita inválido.', null, 400);
+    }
+
+    $receitaStmt = $pdo->prepare('SELECT nota, avaliacoes FROM receitas WHERE id_receita = :id');
+    $receitaStmt->execute([':id' => $idReceita]);
+    $receita = $receitaStmt->fetch();
+    if (!$receita) {
+        jsonReply(false, 'Receita não encontrada.', null, 404);
+    }
+
+    $reviewsStmt = $pdo->prepare('SELECT a.nota, a.comentario, a.data_avaliacao, u.nome
+        FROM avaliacoes_receitas a
+        INNER JOIN usuarios u ON u.id_usuario = a.id_usuario
+        WHERE a.id_receita = :id
+        ORDER BY a.data_avaliacao DESC, a.id_avaliacao DESC
+        LIMIT 50');
+    $reviewsStmt->execute([':id' => $idReceita]);
+    $countStmt = $pdo->prepare('SELECT COUNT(*) FROM avaliacoes_receitas WHERE id_receita = :id');
+    $countStmt->execute([':id' => $idReceita]);
+
+    $idUsuario = (int)($_SESSION['user_id'] ?? 0);
+    $usuarioAtivo = false;
+    $minhaAvaliacao = null;
+    if ($idUsuario > 0) {
+        $usuarioStmt = $pdo->prepare('SELECT id_usuario FROM usuarios WHERE id_usuario = :id AND ativo = 1');
+        $usuarioStmt->execute([':id' => $idUsuario]);
+        $usuarioAtivo = (bool)$usuarioStmt->fetch();
+        if ($usuarioAtivo) {
+            $minhaStmt = $pdo->prepare('SELECT nota, comentario FROM avaliacoes_receitas WHERE id_receita = :receita AND id_usuario = :usuario LIMIT 1');
+            $minhaStmt->execute([':receita' => $idReceita, ':usuario' => $idUsuario]);
+            $minhaAvaliacao = $minhaStmt->fetch() ?: null;
+        } else {
+            unset($_SESSION['user_id']);
+        }
+    }
+
+    jsonReply(true, 'Avaliações carregadas.', [
+        'nota' => (float)$receita['nota'],
+        'avaliacoes' => (int)$receita['avaliacoes'],
+        'comentarios' => (int)$countStmt->fetchColumn(),
+        'reviews' => $reviewsStmt->fetchAll(),
+        'current_user_review' => $minhaAvaliacao,
+        'authenticated' => $usuarioAtivo,
+    ]);
+}
+
+if ($action === 'avaliar') {
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        jsonReply(false, 'Método não permitido.', null, 405);
+    }
+
+    $idUsuario = (int)($_SESSION['user_id'] ?? 0);
+    if ($idUsuario < 1) {
+        jsonReply(false, 'Entre com sua conta cadastrada para avaliar esta receita.', null, 401);
+    }
+
+    $input = json_decode(file_get_contents('php://input'), true) ?? [];
+    $idReceita = (int)($input['id_receita'] ?? 0);
+    $nota = filter_var($input['nota'] ?? null, FILTER_VALIDATE_INT);
+    $comentario = trim((string)($input['comentario'] ?? ''));
+    $tamanhoComentario = preg_match_all('/./us', $comentario);
+
+    if ($idReceita < 1 || $nota === false || $nota < 1 || $nota > 5) {
+        jsonReply(false, 'Selecione uma nota de 1 a 5 estrelas.', null, 400);
+    }
+    if ($tamanhoComentario === false || $tamanhoComentario > 1000) {
+        jsonReply(false, 'O comentário deve ter no máximo 1000 caracteres.', null, 400);
+    }
+
+    try {
+        $pdo->beginTransaction();
+
+        $usuarioStmt = $pdo->prepare('SELECT id_usuario FROM usuarios WHERE id_usuario = :id AND ativo = 1 FOR UPDATE');
+        $usuarioStmt->execute([':id' => $idUsuario]);
+        if (!$usuarioStmt->fetch()) {
+            $pdo->rollBack();
+            unset($_SESSION['user_id']);
+            jsonReply(false, 'Sua conta não está disponível para avaliar.', null, 403);
+        }
+
+        $receitaStmt = $pdo->prepare('SELECT nota, avaliacoes FROM receitas WHERE id_receita = :id FOR UPDATE');
+        $receitaStmt->execute([':id' => $idReceita]);
+        $receita = $receitaStmt->fetch();
+        if (!$receita) {
+            $pdo->rollBack();
+            jsonReply(false, 'Receita não encontrada.', null, 404);
+        }
+
+        $anteriorStmt = $pdo->prepare('SELECT nota FROM avaliacoes_receitas WHERE id_receita = :receita AND id_usuario = :usuario FOR UPDATE');
+        $anteriorStmt->execute([':receita' => $idReceita, ':usuario' => $idUsuario]);
+        $anterior = $anteriorStmt->fetch();
+
+        $saveStmt = $pdo->prepare('INSERT INTO avaliacoes_receitas (id_receita, id_usuario, nota, comentario)
+            VALUES (:receita, :usuario, :nota, :comentario)
+            ON DUPLICATE KEY UPDATE nota = VALUES(nota), comentario = VALUES(comentario), data_avaliacao = CURRENT_TIMESTAMP');
+        $saveStmt->execute([
+            ':receita' => $idReceita,
+            ':usuario' => $idUsuario,
+            ':nota' => $nota,
+            ':comentario' => $comentario,
+        ]);
+
+        $mediaStmt = $pdo->prepare('SELECT AVG(nota) AS media, COUNT(*) AS quantidade FROM avaliacoes_receitas WHERE id_receita = :id');
+        $mediaStmt->execute([':id' => $idReceita]);
+        $avaliacaoAtual = $mediaStmt->fetch();
+        $mediaNova = round((float)$avaliacaoAtual['media'], 1);
+        $quantidadeNova = (int)$avaliacaoAtual['quantidade'];
+
+        $updateStmt = $pdo->prepare('UPDATE receitas SET nota = :nota, avaliacoes = :avaliacoes WHERE id_receita = :id');
+        $updateStmt->execute([':nota' => $mediaNova, ':avaliacoes' => $quantidadeNova, ':id' => $idReceita]);
+        $pdo->commit();
+
+        jsonReply(true, $anterior ? 'Sua avaliação foi atualizada.' : 'Sua avaliação foi registrada.', [
+            'nota' => $mediaNova,
+            'avaliacoes' => $quantidadeNova,
+        ]);
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        jsonReply(false, 'Não foi possível registrar a avaliação. Tente novamente.', null, 500);
+    }
+}
+
+if ($action === 'verificacoes_criadores') {
+    $administrador = currentDatabaseUser($pdo);
+    if (!$administrador || $administrador['tipo_usuario'] !== 'admin') {
+        jsonReply(false, 'Apenas administradores podem acessar as verificações.', null, 403);
+    }
+    if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
+        jsonReply(false, 'Método não permitido.', null, 405);
+    }
+
+    $stmt = $pdo->query('SELECT v.id_verificacao, v.id_usuario, v.empresa, v.cnpj, v.relato_profissional,
+            v.link_evidencia, v.status, v.parecer_revisor, v.criado_em, v.analisado_em,
+            u.nome, u.email, u.tipo_usuario
+        FROM verificacoes_criadores v
+        INNER JOIN usuarios u ON u.id_usuario = v.id_usuario
+        ORDER BY CASE v.status WHEN "pendente" THEN 0 WHEN "reprovado" THEN 1 ELSE 2 END, v.criado_em ASC');
+    jsonReply(true, 'Solicitações carregadas.', $stmt->fetchAll());
+}
+
+if ($action === 'reenviar_verificacao') {
+    $usuario = currentDatabaseUser($pdo);
+    if (!$usuario || !in_array($usuario['tipo_usuario'], ['chef', 'restaurante'], true)) {
+        jsonReply(false, 'Entre com uma conta de chef ou restaurante para atualizar a solicitação.', null, 403);
+    }
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        jsonReply(false, 'Método não permitido.', null, 405);
+    }
+
+    $input = json_decode(file_get_contents('php://input'), true) ?? [];
+    $empresa = trim((string)($input['empresa'] ?? ''));
+    $cnpj = preg_replace('/\D+/', '', (string)($input['cnpj'] ?? ''));
+    $relato = trim((string)($input['relato_profissional'] ?? ''));
+    $link = trim((string)($input['link_evidencia'] ?? ''));
+    if ($empresa === '' || strlen($empresa) > 150 || !cnpjHasValidFormat($cnpj)
+        || mb_strlen($relato) < 40 || mb_strlen($relato) > 3000 || strlen($link) > 500 || !evidenceUrlIsValid($link)) {
+        jsonReply(false, 'Revise empresa, CNPJ, relato profissional e link de evidência.', null, 400);
+    }
+
+    try {
+        $pdo->beginTransaction();
+        $solicitacao = $pdo->prepare('SELECT status FROM verificacoes_criadores WHERE id_usuario = :id FOR UPDATE');
+        $solicitacao->execute([':id' => (int)$usuario['id_usuario']]);
+        $atual = $solicitacao->fetch();
+        if (!$atual || $atual['status'] === 'aprovado') {
+            $pdo->rollBack();
+            jsonReply(false, 'Não há uma solicitação que possa ser reenviada.', null, 409);
+        }
+
+        $pdo->prepare('UPDATE verificacoes_criadores SET empresa = :empresa, cnpj = :cnpj,
+                relato_profissional = :relato, link_evidencia = :link, status = "pendente",
+                parecer_revisor = NULL, revisado_por = NULL, analisado_em = NULL
+            WHERE id_usuario = :id')
+            ->execute([
+                ':empresa' => $empresa,
+                ':cnpj' => $cnpj,
+                ':relato' => $relato,
+                ':link' => $link !== '' ? $link : null,
+                ':id' => (int)$usuario['id_usuario'],
+            ]);
+        $pdo->prepare('UPDATE perfis_criadores SET status_validacao = "pendente" WHERE id_usuario = :id')
+            ->execute([':id' => (int)$usuario['id_usuario']]);
+        $pdo->prepare('UPDATE usuarios SET cnpj = :cnpj, cnpj_validado = 0, cnpj_validado_em = NULL WHERE id_usuario = :id')
+            ->execute([':cnpj' => $cnpj, ':id' => (int)$usuario['id_usuario']]);
+        $pdo->commit();
+        jsonReply(true, 'Evidências reenviadas para análise.', ['status' => 'pendente']);
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        jsonReply(false, 'Não foi possível reenviar a solicitação.', null, 500);
+    }
+}
+
+if ($action === 'revisar_criador') {
+    $administrador = currentDatabaseUser($pdo);
+    if (!$administrador || $administrador['tipo_usuario'] !== 'admin') {
+        jsonReply(false, 'Apenas administradores podem revisar criadores.', null, 403);
+    }
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        jsonReply(false, 'Método não permitido.', null, 405);
+    }
+
+    $input = json_decode(file_get_contents('php://input'), true) ?? [];
+    $idUsuario = (int)($input['id_usuario'] ?? 0);
+    $decisao = strtolower(trim((string)($input['decisao'] ?? '')));
+    $parecer = trim((string)($input['parecer'] ?? ''));
+    if ($idUsuario < 1 || !in_array($decisao, ['aprovado', 'reprovado'], true) || mb_strlen($parecer) < 10 || mb_strlen($parecer) > 1000) {
+        jsonReply(false, 'Selecione uma decisão e registre um parecer de 10 a 1000 caracteres.', null, 400);
+    }
+
+    try {
+        $pdo->beginTransaction();
+        $solicitacao = $pdo->prepare('SELECT id_usuario FROM verificacoes_criadores WHERE id_usuario = :id FOR UPDATE');
+        $solicitacao->execute([':id' => $idUsuario]);
+        if (!$solicitacao->fetch()) {
+            $pdo->rollBack();
+            jsonReply(false, 'Solicitação não encontrada.', null, 404);
+        }
+
+        $pdo->prepare('UPDATE verificacoes_criadores
+            SET status = :status, parecer_revisor = :parecer, revisado_por = :revisor, analisado_em = NOW()
+            WHERE id_usuario = :id')
+            ->execute([
+                ':status' => $decisao,
+                ':parecer' => $parecer,
+                ':revisor' => (int)$administrador['id_usuario'],
+                ':id' => $idUsuario,
+            ]);
+        $pdo->prepare('UPDATE perfis_criadores SET status_validacao = :status WHERE id_usuario = :id')
+            ->execute([':status' => $decisao, ':id' => $idUsuario]);
+        $pdo->prepare('UPDATE usuarios SET cnpj_validado = :validado, cnpj_validado_em = IF(:validado_data = 1, NOW(), NULL) WHERE id_usuario = :id')
+            ->execute([
+                ':validado' => $decisao === 'aprovado' ? 1 : 0,
+                ':validado_data' => $decisao === 'aprovado' ? 1 : 0,
+                ':id' => $idUsuario,
+            ]);
+        $pdo->commit();
+
+        jsonReply(true, $decisao === 'aprovado' ? 'Criador aprovado.' : 'Solicitação reprovada.', ['status' => $decisao]);
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        jsonReply(false, 'Não foi possível salvar a decisão.', null, 500);
+    }
+}
+
 if ($action === 'perfil') {
     $input = json_decode(file_get_contents('php://input'), true) ?? [];
-    $idUsuario = (int)($input['id_usuario'] ?? $_GET['id_usuario'] ?? 0);
+    $usuarioSessao = currentDatabaseUser($pdo);
+    if (!$usuarioSessao) {
+        jsonReply(false, 'Entre na sua conta para acessar o perfil.', null, 401);
+    }
+    $idUsuario = (int)$usuarioSessao['id_usuario'];
 
     if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         if (!$idUsuario) {
             jsonReply(false, 'Identificador do usuário obrigatório.', null, 400);
         }
 
-        $stmt = $pdo->prepare('SELECT u.*, p.biografia, p.link_portfolio, p.status_validacao
+        $stmt = $pdo->prepare('SELECT u.*, p.biografia, p.link_portfolio, p.status_validacao,
+                v.empresa AS verificacao_empresa, v.relato_profissional AS verificacao_relato,
+                v.link_evidencia AS verificacao_link, v.parecer_revisor AS verificacao_parecer
             FROM usuarios u
             LEFT JOIN perfis_criadores p ON p.id_usuario = u.id_usuario
+            LEFT JOIN verificacoes_criadores v ON v.id_usuario = u.id_usuario
             WHERE u.id_usuario = :id');
         $stmt->execute([':id' => $idUsuario]);
         $usuario = $stmt->fetch();
@@ -280,9 +655,7 @@ if ($action === 'perfil') {
     $telefone = trim((string)($input['telefone'] ?? ''));
     $biografia = trim((string)($input['biografia'] ?? ''));
     $linkPortfolio = trim((string)($input['link_portfolio'] ?? ''));
-    $statusValidacao = trim((string)($input['status_validacao'] ?? 'pendente'));
-
-    if (!$idUsuario || $nome === '' || $email === '') {
+    if ($nome === '' || $email === '') {
         jsonReply(false, 'Dados do perfil incompletos.', null, 400);
     }
 
@@ -292,14 +665,13 @@ if ($action === 'perfil') {
         $pdo->prepare('UPDATE usuarios SET nome = :nome, email = :email, telefone = :telefone WHERE id_usuario = :id')
             ->execute([':nome' => $nome, ':email' => $email, ':telefone' => $telefone, ':id' => $idUsuario]);
 
-        $pdo->prepare('INSERT INTO perfis_criadores (id_usuario, biografia, link_portfolio, status_validacao)
-            VALUES (:id, :biografia, :link, :status)
-            ON DUPLICATE KEY UPDATE biografia = VALUES(biografia), link_portfolio = VALUES(link_portfolio), status_validacao = VALUES(status_validacao)')
+        $pdo->prepare('INSERT INTO perfis_criadores (id_usuario, biografia, link_portfolio)
+            VALUES (:id, :biografia, :link)
+            ON DUPLICATE KEY UPDATE biografia = VALUES(biografia), link_portfolio = VALUES(link_portfolio)')
             ->execute([
                 ':id' => $idUsuario,
                 ':biografia' => $biografia,
                 ':link' => $linkPortfolio,
-                ':status' => $statusValidacao,
             ]);
 
         $pdo->commit();
@@ -312,12 +684,35 @@ if ($action === 'perfil') {
 
 if ($action === 'cadastro_receita') {
     $input = json_decode(file_get_contents('php://input'), true) ?? [];
-    $idCriador = (int)($input['id_criador'] ?? 0);
+    $criador = currentDatabaseUser($pdo);
+    if (!$criador) {
+        jsonReply(false, 'Entre com sua conta para publicar receitas.', null, 401);
+    }
+    if (!in_array($criador['tipo_usuario'], ['chef', 'restaurante'], true)) {
+        jsonReply(false, 'A publicação é exclusiva para perfis de chef ou restaurante.', null, 403);
+    }
+
+    $statusStmt = $pdo->prepare('SELECT status_validacao FROM perfis_criadores WHERE id_usuario = :id');
+    $statusStmt->execute([':id' => $criador['id_usuario']]);
+    if ($statusStmt->fetchColumn() !== 'aprovado') {
+        jsonReply(false, 'Sua verificação profissional ainda está pendente. A publicação será liberada após aprovação da equipe.', null, 403);
+    }
+
+    $idCriador = (int)$criador['id_usuario'];
     $titulo = trim((string)($input['titulo'] ?? ''));
     $descricao = trim((string)($input['descricao_introducao'] ?? ''));
 
     if (!$idCriador || $titulo === '' || $descricao === '') {
         jsonReply(false, 'Dados da receita incompletos.', null, 400);
+    }
+
+    $nivelDificuldade = (string)($input['nivel_dificuldade'] ?? 'facil');
+    if (!in_array($nivelDificuldade, ['facil', 'medio', 'dificil'], true)) {
+        $nivelDificuldade = 'facil';
+    }
+    $tipoAcesso = (string)($input['tipo_acesso'] ?? 'gratuito');
+    if (!in_array($tipoAcesso, ['gratuito', 'exclusivo_pago'], true)) {
+        $tipoAcesso = 'gratuito';
     }
 
     try {
@@ -339,12 +734,8 @@ if ($action === 'cadastro_receita') {
             ':descricao' => $descricao,
             ':rendimento' => (int)($input['rendimento'] ?? 1),
             ':tempo' => (int)($input['tempo_preparo_minutos'] ?? 0),
-            ':nivel' => in_array((string)($input['nivel_dificuldade'] ?? 'facil'), ['facil', 'medio', 'dificil'], true)
-                ? (string)$input['nivel_dificuldade']
-                : 'facil',
-            ':tipo_acesso' => in_array((string)($input['tipo_acesso'] ?? 'gratuito'), ['gratuito', 'exclusivo_pago'], true)
-                ? (string)$input['tipo_acesso']
-                : 'gratuito',
+            ':nivel' => $nivelDificuldade,
+            ':tipo_acesso' => $tipoAcesso,
             ':preco_conteudo' => (float)($input['preco_conteudo'] ?? 0),
             ':img' => trim((string)($input['img'] ?? 'img/pastel.png')) ?: 'img/pastel.png',
             ':pais' => trim((string)($input['pais'] ?? '')) ?: null,
@@ -407,7 +798,11 @@ if ($action === 'cadastro_receita') {
 
 if ($action === 'pedido') {
     $input = json_decode(file_get_contents('php://input'), true) ?? [];
-    $idCliente = (int)($input['id_cliente'] ?? 0);
+    $clienteSessao = currentDatabaseUser($pdo);
+    if (!$clienteSessao) {
+        jsonReply(false, 'Entre com sua conta para finalizar o pedido.', null, 401);
+    }
+    $idCliente = (int)$clienteSessao['id_usuario'];
     $itens = is_array($input['itens'] ?? null) ? $input['itens'] : [];
     $nomeDestinatario = trim((string)($input['nome_destinatario'] ?? ''));
     $observacoes = trim((string)($input['observacoes'] ?? ''));
@@ -420,11 +815,18 @@ if ($action === 'pedido') {
     $bairro = trim((string)($endereco['bairro'] ?? ''));
     $cidade = trim((string)($endereco['cidade'] ?? ''));
     $estado = strtoupper(trim((string)($endereco['estado'] ?? '')));
-    $bandeiraCartao = strtolower(trim((string)($input['cartao_bandeira'] ?? '')));
-    $ultimosQuatro = preg_replace('/\D+/', '', (string)($input['cartao_ultimos4'] ?? ''));
+    $bancoPagador = trim((string)($input['pix_banco'] ?? ''));
+    $titularPagador = trim((string)($input['pix_titular'] ?? ''));
+    $cpfPagador = preg_replace('/\D+/', '', (string)($input['pix_cpf'] ?? ''));
+    $bancosAceitos = ['banco_do_brasil', 'caixa', 'itau', 'bradesco', 'santander', 'inter', 'nubank', 'outro'];
 
-    if (!$idCliente || !$itens || $nomeDestinatario === '' || !in_array($metodo, ['pix', 'cartao', 'boleto', 'transferencia'], true)) {
+    if (!$itens || $nomeDestinatario === '' || !in_array($metodo, ['pix', 'dinheiro'], true)) {
         jsonReply(false, 'Pedido, destinatário e forma de pagamento são obrigatórios.', null, 400);
+    }
+
+    if ($metodo === 'pix' && (!in_array($bancoPagador, $bancosAceitos, true)
+        || $titularPagador === '' || mb_strlen($titularPagador) > 100 || !cpfHasValidChecksum($cpfPagador))) {
+        jsonReply(false, 'Para a simulação Pix, informe banco, titular e um CPF válido. Não use dados bancários reais.', null, 400);
     }
 
     if (strlen($cep) !== 8 || $logradouro === '' || $numero === '' || $bairro === '' || $cidade === '' || !preg_match('/^[A-Z]{2}$/', $estado)) {
@@ -438,16 +840,6 @@ if ($action === 'pedido') {
     if (strlen($nomeDestinatario) > 100 || strlen($logradouro) > 150 || strlen($numero) > 20
         || strlen($complemento) > 100 || strlen($bairro) > 100 || strlen($cidade) > 100) {
         jsonReply(false, 'Um dos campos do destinatário ou endereço excede o tamanho permitido.', null, 400);
-    }
-
-    if ($metodo === 'cartao') {
-        $bandeirasAceitas = ['visa', 'mastercard', 'elo', 'amex', 'hipercard', 'outro'];
-        if (!in_array($bandeiraCartao, $bandeirasAceitas, true) || strlen($ultimosQuatro) !== 4) {
-            jsonReply(false, 'Para o cartão de demonstração, informe a bandeira e os quatro últimos dígitos.', null, 400);
-        }
-    } else {
-        $bandeiraCartao = '';
-        $ultimosQuatro = '';
     }
 
     try {
@@ -560,7 +952,7 @@ if ($action === 'pedido') {
             ':bairro' => $bairro,
             ':cidade' => $cidade,
             ':estado' => $estado,
-            ':status' => 'confirmado',
+            ':status' => $metodo === 'pix' ? 'pendente' : 'confirmado',
             ':status_entrega' => 'aguardando_separacao',
             ':valor_total' => number_format($valorTotal, 2, '.', ''),
         ]);
@@ -583,26 +975,33 @@ if ($action === 'pedido') {
                 ]);
         }
 
+        $referencia = 'DEMO-' . strtoupper(bin2hex(random_bytes(8)));
+        $linkPagamento = $metodo === 'pix' ? 'pix-simulado.html?ref=' . rawurlencode($referencia) : null;
         $pagamento = $pdo->prepare('INSERT INTO pagamentos
-            (id_pedido, metodo, status, valor, provedor, referencia_transacao, bandeira_cartao, ultimos_quatro)
-            VALUES (:id_pedido, :metodo, :status, :valor, :provedor, :referencia, :bandeira, :ultimos_quatro)');
+            (id_pedido, metodo, status, valor, provedor, referencia_transacao, banco_pagador, titular_pagador, cpf_final4, link_pagamento)
+            VALUES (:id_pedido, :metodo, :status, :valor, :provedor, :referencia, :banco, :titular, :cpf_final4, :link)');
         $pagamento->execute([
             ':id_pedido' => $idPedido,
             ':metodo' => $metodo,
-            ':status' => 'aprovado',
+            ':status' => 'pendente',
             ':valor' => number_format($valorTotal, 2, '.', ''),
-            ':provedor' => 'demonstracao',
-            ':referencia' => 'DEMO-' . strtoupper(bin2hex(random_bytes(8))),
-            ':bandeira' => $metodo === 'cartao' ? $bandeiraCartao : null,
-            ':ultimos_quatro' => $metodo === 'cartao' ? $ultimosQuatro : null,
+            ':provedor' => $metodo === 'pix' ? 'pix_demo' : 'dinheiro_na_entrega',
+            ':referencia' => $referencia,
+            ':banco' => $metodo === 'pix' ? $bancoPagador : null,
+            ':titular' => $metodo === 'pix' ? $titularPagador : null,
+            ':cpf_final4' => $metodo === 'pix' ? substr($cpfPagador, -4) : null,
+            ':link' => $linkPagamento,
         ]);
 
         $pdo->commit();
         jsonReply(true, 'Pedido de demonstração registrado com sucesso.', [
             'id_pedido' => $idPedido,
             'valor_total' => $valorTotal,
-            'status_pagamento' => 'aprovado',
+            'metodo_pagamento' => $metodo,
+            'status_pagamento' => 'pendente',
             'status_entrega' => 'aguardando_separacao',
+            'link_pagamento' => $linkPagamento,
+            'referencia_pagamento' => $referencia,
         ]);
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) {
@@ -610,6 +1009,84 @@ if ($action === 'pedido') {
         }
         $status = $e instanceof PDOException ? 500 : 400;
         jsonReply(false, 'Erro ao registrar pedido: ' . $e->getMessage(), null, $status);
+    }
+}
+
+if ($action === 'pix_detalhe') {
+    $usuario = currentDatabaseUser($pdo);
+    if (!$usuario) {
+        jsonReply(false, 'Entre na sua conta para consultar esta simulação.', null, 401);
+    }
+    $referencia = trim((string)($_GET['ref'] ?? ''));
+    $stmt = $pdo->prepare('SELECT p.referencia_transacao, p.status, p.valor, p.banco_pagador,
+            p.titular_pagador, p.cpf_final4, o.id_pedido
+        FROM pagamentos p
+        INNER JOIN pedidos o ON o.id_pedido = p.id_pedido
+        WHERE p.referencia_transacao = :referencia AND p.metodo = "pix" AND o.id_cliente = :usuario
+        LIMIT 1');
+    $stmt->execute([':referencia' => $referencia, ':usuario' => (int)$usuario['id_usuario']]);
+    $pagamento = $stmt->fetch();
+    if (!$pagamento) {
+        jsonReply(false, 'Link de pagamento de demonstração inválido ou expirado.', null, 404);
+    }
+
+    jsonReply(true, 'Dados da simulação Pix.', [
+        'referencia' => $pagamento['referencia_transacao'],
+        'id_pedido' => (int)$pagamento['id_pedido'],
+        'status' => $pagamento['status'],
+        'valor' => (float)$pagamento['valor'],
+        'banco_pagador' => $pagamento['banco_pagador'],
+        'titular_pagador' => $pagamento['titular_pagador'],
+        'cpf_final4' => $pagamento['cpf_final4'],
+        'chave_demo' => 'GASTROMATCH-PIX-DEMO',
+    ]);
+}
+
+if ($action === 'simular_pagamento_pix') {
+    $usuario = currentDatabaseUser($pdo);
+    if (!$usuario) {
+        jsonReply(false, 'Entre na sua conta para confirmar a simulação.', null, 401);
+    }
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        jsonReply(false, 'Método não permitido.', null, 405);
+    }
+    $input = json_decode(file_get_contents('php://input'), true) ?? [];
+    $referencia = trim((string)($input['referencia'] ?? ''));
+
+    try {
+        $pdo->beginTransaction();
+        $stmt = $pdo->prepare('SELECT p.id_pagamento, p.id_pedido, p.status
+            FROM pagamentos p
+            INNER JOIN pedidos o ON o.id_pedido = p.id_pedido
+            WHERE p.referencia_transacao = :referencia AND p.metodo = "pix" AND o.id_cliente = :usuario
+            LIMIT 1 FOR UPDATE');
+        $stmt->execute([':referencia' => $referencia, ':usuario' => (int)$usuario['id_usuario']]);
+        $pagamento = $stmt->fetch();
+        if (!$pagamento) {
+            $pdo->rollBack();
+            jsonReply(false, 'Link de pagamento de demonstração inválido ou expirado.', null, 404);
+        }
+        if ($pagamento['status'] === 'aprovado') {
+            $pdo->commit();
+            jsonReply(true, 'Esta simulação já foi confirmada.', ['status' => 'aprovado']);
+        }
+        if ($pagamento['status'] !== 'pendente') {
+            $pdo->rollBack();
+            jsonReply(false, 'Este pagamento não está mais pendente.', null, 409);
+        }
+
+        $pdo->prepare('UPDATE pagamentos SET status = "aprovado" WHERE id_pagamento = :id')
+            ->execute([':id' => (int)$pagamento['id_pagamento']]);
+        $pdo->prepare('UPDATE pedidos SET status_pedido = "confirmado" WHERE id_pedido = :id')
+            ->execute([':id' => (int)$pagamento['id_pedido']]);
+        $pdo->commit();
+
+        jsonReply(true, 'Pagamento Pix de demonstração confirmado.', ['status' => 'aprovado']);
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        jsonReply(false, 'Não foi possível confirmar a simulação Pix.', null, 500);
     }
 }
 
@@ -648,7 +1125,7 @@ if ($action === 'receitas') {
             'nivel_dificuldade' => $receita['nivel_dificuldade'],
             'tipo_acesso' => $receita['tipo_acesso'],
             'preco_conteudo' => (float)($receita['preco_conteudo'] ?? 0),
-            'img' => $receita['img'] ?: 'img/pastel.png',
+            'img' => normalizeRecipeImagePath((string)($receita['img'] ?? '')),
             'pais' => $receita['pais'],
             'nota' => (float)($receita['nota'] ?? 0),
             'avaliacoes' => (int)($receita['avaliacoes'] ?? 0),

@@ -25,6 +25,9 @@ const tabelas = [
       ] },
       { nome: 'perfis_criadores', titulo: 'Perfis criadores', desc: 'Dados profissionais e validação de chefs e restaurantes.', fields: [
         ['id_perfil','INT','pk'], ['id_usuario','INT','fk → usuarios.id_usuario'], ['biografia','TEXT',''], ['foto_perfil','VARCHAR(255)',''], ['link_portfolio','VARCHAR(255)',''], ['documento_validacao','VARCHAR(255)',''], ['status_validacao','ENUM',''], ['latitude','DECIMAL',''], ['longitude','DECIMAL','']
+      ] },
+      { nome: 'verificacoes_criadores', titulo: 'Verificações de criadores', desc: 'Evidências profissionais avaliadas manualmente pela equipe.', fields: [
+        ['id_verificacao','INT','pk'], ['id_usuario','INT','fk → usuarios.id_usuario'], ['empresa','VARCHAR(150)',''], ['cnpj','VARCHAR(14)',''], ['relato_profissional','TEXT',''], ['link_evidencia','VARCHAR(500)',''], ['status','ENUM',''], ['parecer_revisor','VARCHAR(1000)',''], ['revisado_por','INT','fk → usuarios.id_usuario'], ['analisado_em','DATETIME','']
       ] }
     ]
   },
@@ -61,6 +64,9 @@ const tabelas = [
       ] },
       { nome: 'itens_pedido', titulo: 'Itens do pedido', desc: 'Itens físicos ou digitais que compõem um pedido.', fields: [
         ['id_item_pedido','INT','pk'], ['id_pedido','INT','fk → pedidos.id_pedido'], ['tipo_item','ENUM',''], ['id_referencia','INT',''], ['quantidade','INT',''], ['preco_unitario','DECIMAL','']
+      ] },
+      { nome: 'pagamentos', titulo: 'Pagamentos simulados', desc: 'Pix acadêmico ou dinheiro na entrega; sem integração financeira real.', fields: [
+        ['id_pagamento','INT','pk'], ['id_pedido','INT','fk → pedidos.id_pedido'], ['metodo','ENUM',''], ['status','ENUM',''], ['valor','DECIMAL',''], ['banco_pagador','VARCHAR(80)',''], ['titular_pagador','VARCHAR(100)',''], ['cpf_final4','CHAR(4)',''], ['link_pagamento','VARCHAR(255)','']
       ] }
     ]
   },
@@ -80,6 +86,7 @@ const tabelas = [
 
 const relacoes = [
   ['usuarios — perfis_criadores','Um usuário pode ter no máximo um perfil criador; o perfil pertence a um usuário.','Especialização 1 : 0..1; manter id_usuario único em perfis_criadores.'],
+  ['usuarios — verificacoes_criadores','Cada perfil profissional tem uma solicitação de verificação revisada por uma pessoa da equipe.','1 : 0..1 por solicitante; revisado_por aponta para o administrador responsável.'],
   ['perfis_criadores — receitas','Um chef/restaurante pode publicar várias receitas; cada receita pertence a um criador.','1 : N; FK id_criador fica em receitas.'],
   ['receitas — videoaulas','Uma receita pode ter uma ou várias videoaulas; cada aula pertence a uma receita.','1 : N; FK id_receita fica em videoaulas.'],
   ['receitas — restricoes_alimentares','Uma receita pode ter várias restrições e uma restrição pode aparecer em várias receitas.','N : N; criar receitas_restricoes.'],
@@ -88,6 +95,7 @@ const relacoes = [
   ['perfis_criadores — raio_entrega_restaurantes','Um perfil pode ter uma regra de cobertura; o desenho atual permite mais de uma.','1 : N no modelo atual; UNIQUE em id_restaurante pode representar 1 : 1.'],
   ['usuarios — pedidos','Um cliente pode fazer vários pedidos; cada pedido pertence a um cliente.','1 : N; FK id_cliente fica em pedidos.'],
   ['pedidos — itens_pedido','Um pedido possui um ou vários itens; cada item pertence a um pedido.','1 : N; FK id_pedido fica em itens_pedido.'],
+  ['pedidos — pagamentos','Cada pedido gera um registro com método e estado de pagamento demonstrativo.','1 : N no schema; pagamentos registra Pix simulado ou dinheiro.'],
   ['usuarios — avaliacoes_comentarios','Um usuário pode publicar várias avaliações; cada avaliação pertence a um usuário.','1 : N; FK id_usuario.'],
   ['receitas — avaliacoes_comentarios','Uma receita pode receber várias avaliações; cada avaliação aponta para uma receita.','1 : N; FK id_receita.'],
   ['usuarios — duvidas_forum','Um usuário pode enviar várias dúvidas.','1 : N; FK id_usuario.'],
@@ -128,10 +136,48 @@ function switchTo(view){
     inicio:['Visão geral','Resumo da estrutura criada para o projeto.'],
     tabelas:['Tabelas do banco','Campos, chaves e grupos do banco GastroMatch.'],
     relacoes:['Relações / cardinalidades','Como as tabelas se conectam no modelo lógico.'],
+    verificacoes:['Verificações de criadores','Analise as evidências profissionais enviadas por chefs e restaurantes.'],
     receita:['Cadastrar receita','Formulário de entrada do conteúdo gastronômico do Chef/Criador.']
   };
   document.getElementById('pageTitle').textContent=meta[view][0];
   document.getElementById('pageSubtitle').textContent=meta[view][1];
+  if(view==='verificacoes') renderVerificacoes();
+}
+
+async function renderVerificacoes(){
+  const container=document.getElementById('view-verificacoes');
+  container.innerHTML='<div class="section-card review-empty">Carregando solicitações...</div>';
+  try{
+    const resposta=await fetch('../api.php?action=verificacoes_criadores',{cache:'no-store',credentials:'same-origin'});
+    const payload=await resposta.json();
+    if(!resposta.ok||!payload.success) throw new Error(payload.message||'Não foi possível carregar as solicitações.');
+    const pedidos=Array.isArray(payload.data)?payload.data:[];
+    if(!pedidos.length){container.innerHTML='<div class="section-card review-empty">Não há solicitações de verificação.</div>';return;}
+    container.innerHTML=`<div class="review-list">${pedidos.map(item=>{
+      const estado=item.status==='aprovado'?'Aprovado':item.status==='reprovado'?'Reprovado':'Pendente';
+      const link=item.link_evidencia?`<a href="${esc(item.link_evidencia)}" target="_blank" rel="noopener">Abrir evidência enviada</a>`:'Nenhum link de evidência enviado.';
+      return `<article class="review-card"><div class="review-head"><div><span class="kicker">${esc(estado)} • recebido ${esc(String(item.criado_em||'').slice(0,16))}</span><h2>${esc(item.nome)} <small>(${esc(item.tipo_usuario||'criador')})</small></h2><p>${esc(item.email)}</p></div><span class="mini-label">CNPJ ${esc(item.cnpj)}</span></div><dl class="review-details"><div><dt>Empresa</dt><dd>${esc(item.empresa)}</dd></div><div><dt>Experiência relatada</dt><dd>${esc(item.relato_profissional)}</dd></div><div><dt>Comprovação</dt><dd>${link}</dd></div>${item.parecer_revisor?`<div><dt>Parecer anterior</dt><dd>${esc(item.parecer_revisor)}</dd></div>`:''}</dl><form class="review-form" onsubmit="revisarCriador(event,${Number(item.id_usuario)})"><label class="field"><span>Parecer da equipe (mínimo 10 caracteres)</span><textarea name="parecer" minlength="10" maxlength="1000" required placeholder="Registre o que foi verificado e o motivo da decisão."></textarea></label><div class="review-actions"><button class="outline-btn" type="submit" name="decisao" value="reprovado">Solicitar ajustes / reprovar</button><button class="primary-btn" type="submit" name="decisao" value="aprovado">Aprovar criador</button></div><p class="form-msg" role="status" aria-live="polite"></p></form></article>`;
+    }).join('')}</div>`;
+  }catch(erro){container.innerHTML=`<div class="section-card review-empty">${esc(erro.message||'Erro ao carregar solicitações.')}</div>`;}
+}
+
+async function revisarCriador(event,idUsuario){
+  event.preventDefault();
+  const form=event.currentTarget;
+  const decisao=event.submitter?.value||'';
+  const mensagem=form.querySelector('[role="status"]');
+  const botoes=[...form.querySelectorAll('button[type="submit"]')];
+  botoes.forEach(botao=>botao.disabled=true);
+  try{
+    const resposta=await fetch('../api.php?action=revisar_criador',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({id_usuario:idUsuario,decisao,parecer:form.elements.parecer.value.trim()})});
+    const payload=await resposta.json();
+    if(!resposta.ok||!payload.success) throw new Error(payload.message||'Não foi possível salvar a decisão.');
+    toast(payload.message);
+    await renderVerificacoes();
+  }catch(erro){
+    mensagem.textContent=erro.message||'Não foi possível salvar a decisão.';
+    botoes.forEach(botao=>botao.disabled=false);
+  }
 }
 
 function tableCard(t){
@@ -235,11 +281,11 @@ async function initPainel(){
   if(!auth){ location.href='../login.html'; return; }
 
   const perfilBanco = await carregarPerfilSeguranca();
-  const perfilAtual = perfilBanco || {
-    nome: auth.nome || 'Usuário GastroMatch',
-    email: auth.email || '',
-    tipo_usuario: auth.role || 'admin'
-  };
+  if(!perfilBanco || perfilBanco.tipo_usuario !== 'admin'){
+    location.href='../index.html#inicio';
+    return;
+  }
+  const perfilAtual = perfilBanco;
 
   document.getElementById('roleName').textContent=ROLES[perfilAtual.tipo_usuario]?.label || perfilAtual.nome || 'Administrador';
   document.getElementById('roleEmail').textContent=perfilAtual.email || auth.email || '';
@@ -249,7 +295,7 @@ async function initPainel(){
   renderTabelas(); renderRelacoes(); renderReceita({ ...auth, role: perfilAtual.tipo_usuario || auth.role, email: perfilAtual.email || auth.email || '', name: perfilAtual.nome || auth.nome || 'Usuário' });
   document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>switchTo(b.dataset.view)));
   document.addEventListener('click', e=>{ const jump=e.target.closest('[data-view-jump]'); if(jump) switchTo(jump.dataset.viewJump); const copy=e.target.closest('[data-table-name]'); if(copy){navigator.clipboard?.writeText(copy.dataset.tableName); toast(`Nome da tabela copiado: ${copy.dataset.tableName}`);} });
-  document.getElementById('logoutBtn').addEventListener('click',()=>{sessionStorage.removeItem('gm_area_auth'); location.href='../login.html';});
+  document.getElementById('logoutBtn').addEventListener('click',()=>{fetch('../api.php?action=logout',{method:'POST',credentials:'same-origin'}).finally(()=>{sessionStorage.removeItem('gm_area_auth');location.href='../login.html';});});
 }
 
 function initLogin(){ location.href='../login.html'; }

@@ -12,7 +12,9 @@ O GastroMatch simula uma aplicação web completa com:
 - receitas com filtros e restrições alimentares
 - videoaulas e conteúdo premium
 - compra de kits de ingredientes
-- fluxo de pagamento em interface local
+- avaliação e comentário em cada receita por conta cadastrada, com uma avaliação editável por usuário
+- Pix simulado e dinheiro na entrega
+- verificação humana de perfis de chef/restaurante
 - integração com MySQL via PHP e PDO
 
 A proposta principal é aproximar o usuário da experiência profissional da cozinha, com receitas mais completas e orientações mais ricas do que uma busca simples na internet.
@@ -27,7 +29,7 @@ A proposta principal é aproximar o usuário da experiência profissional da coz
 - filtros por dificuldade, tempo e restrição alimentar
 - compra de kits de ingredientes
 - checkout com endereço, observações, itens e status de entrega
-- pagamento simulado com registro de status e metadados não sensíveis de cartão
+- pagamento Pix demonstrativo com registro no banco, sem gateway financeiro
 - controle de estoque dos kits durante a criação do pedido
 - persistência em banco de dados MySQL
 
@@ -39,6 +41,8 @@ A proposta principal é aproximar o usuário da experiência profissional da coz
 - [Banco de dados/banco.sql](Banco%20de%20dados/banco.sql) — estrutura do banco e dados iniciais
 - [Banco de dados/migracao_compras.sql](Banco%20de%20dados/migracao_compras.sql) — migração incremental do checkout
 - [Banco de dados/migracao_imagens_png.sql](Banco%20de%20dados/migracao_imagens_png.sql) — atualização das imagens cadastradas para PNG
+- [Banco de dados/migracao_avaliacoes.sql](Banco%20de%20dados/migracao_avaliacoes.sql) — tabela de avaliações por receita e usuário
+- [Banco de dados/migracao_pix_verificacao.sql](Banco%20de%20dados/migracao_pix_verificacao.sql) — dados do Pix simulado e fila de verificação profissional
 - [Codigo/codigo.js](Codigo/codigo.js) — lógica principal do site
 - [Codigo/login.js](Codigo/login.js) — autenticação e cadastro
 - [Estilo/estilo.css](Estilo/estilo.css) — estilos gerais
@@ -58,7 +62,9 @@ O banco contém as tabelas principais:
 
 - usuarios
 - perfis_criadores
+- verificacoes_criadores
 - receitas
+- avaliacoes_receitas
 - receitas_restricoes
 - videoaulas
 - kits_ingredientes
@@ -76,7 +82,7 @@ O sistema realiza:
 - campo de CNPJ para chef/restaurante (14 dígitos; autenticidade fica pendente de integração com API)
 - login com e-mail e senha consultando a tabela `usuarios`
 - verificação em duas etapas opcional
-- sessão do usuário em `sessionStorage`
+- sessão autenticada no servidor PHP, com cookie `HttpOnly`; `sessionStorage` mantém apenas o estado visual do navegador
 
 ## Requisitos
 
@@ -101,6 +107,10 @@ Se o banco já existe e contém dados, **não reimporte** o arquivo de instalaç
 
 Para atualizar as imagens das receitas em um banco existente, execute também uma vez [Banco de dados/migracao_imagens_png.sql](Banco%20de%20dados/migracao_imagens_png.sql) pelo phpMyAdmin.
 
+Para habilitar as avaliações em um banco existente, execute uma vez [Banco de dados/migracao_avaliacoes.sql](Banco%20de%20dados/migracao_avaliacoes.sql) pelo phpMyAdmin. A tabela armazena nota e comentário por usuário/receita, impede duplicidade e não altera as receitas ou contas existentes.
+
+Para atualizar pagamentos e criar a fila humana de chefs, execute uma vez [Banco de dados/migracao_pix_verificacao.sql](Banco%20de%20dados/migracao_pix_verificacao.sql) depois da migração do checkout. Ela preserva pagamentos antigos, cria os campos do Pix demonstrativo e a tabela `verificacoes_criadores`, e inicializa o hash da conta administrativa local. Em cada ambiente, use uma senha privada e não compartilhe credenciais.
+
 O arquivo de migração usa comandos `ALTER TABLE` compatíveis com MySQL/MariaDB sem `ADD COLUMN IF NOT EXISTS`, que não está disponível em todas as versões. Execute-o uma única vez em cada cópia existente do banco. Para duas pessoas trabalhando em máquinas diferentes, cada uma aplica a mesma migração ao seu banco local; isso sincroniza o esquema, mas não sincroniza os dados. Compartilhar dados entre máquinas exige configurar um único servidor MySQL acessível a ambas.
 
 ### Passo 3: colocar o projeto na pasta do servidor
@@ -109,12 +119,14 @@ Copie a pasta do projeto para:
 `C:\xampp\htdocs\Projeto-GastroMatch`
 
 ### Passo 4: acessar as páginas
-Abra no navegador:
+Com o Apache na porta padrão 80, abra no navegador:
 
-- http://localhost:8090/Projeto-GastroMatch/login.html
-- http://localhost:8090/Projeto-GastroMatch/index.html
+- http://localhost/Projeto-GastroMatch/login.html
+- http://localhost/Projeto-GastroMatch/index.html
 
-Abra as páginas pelo Apache, usando o endereço HTTP acima; não abra os arquivos HTML diretamente pelo explorador (`file://`). A porta 8090 é do Apache. O MySQL usa uma porta própria, normalmente 3306 no XAMPP.
+Abra as páginas pelo Apache; não abra os arquivos HTML diretamente pelo explorador (`file://`). Se o HTTPS estiver configurado no Apache, use `https://localhost/Projeto-GastroMatch/` (porta padrão 443). As chamadas do navegador à API usam o mesmo host, protocolo e porta da página. A conexão do PHP ao MySQL é independente: por padrão usa `127.0.0.1:3306`.
+
+Para configurar outra instalação do MySQL, defina `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER` e `DB_PASS` no ambiente do Apache/PHP. Em cada computador, o Apache e o MySQL locais devem estar iniciados e o banco `gastromatch` precisa ser importado nesse MySQL. Os dados locais não são sincronizados automaticamente entre computadores; para compartilhar os mesmos dados, configure um servidor MySQL central e restrinja o acesso à rede necessária. As portas 80 e 443 são do Apache, não devem ser usadas como porta do MySQL.
 
 ## Usuários iniciais do banco
 
@@ -126,17 +138,18 @@ Na tela de login, selecione o perfil correspondente e use um dos códigos abaixo
 
 - Cliente: `GM-CLI-2026`
 - Chef / Criador: `GM-CHEF-2026`
-- Administrador: `GM-ADM-2026`
 
-### Verificação de CNPJ
+O administrador deve entrar com `admin@gastromatch.com.br` e uma senha privada configurada no banco local. Não use códigos públicos para acesso administrativo.
 
-No cadastro de chef/restaurante, o CNPJ deve ter 14 dígitos, mas não precisa passar pelo cálculo dos dígitos verificadores para permitir demonstrações. A tabela `usuarios` já possui `cnpj_validado` e `cnpj_validado_em` para registrar futuramente o resultado e a data de uma consulta a uma API. Novos cadastros ficam pendentes (`cnpj_validado = 0`) até essa integração.
+### Verificação de criadores
+
+Chefes e restaurantes informam CNPJ, empresa, relato profissional e um link opcional de evidência. A solicitação permanece pendente até análise humana no painel restrito. O CNPJ não aprova a conta automaticamente, e o servidor bloqueia a publicação de receitas até a equipe aprovar. O parecer pode pedir ajustes e o candidato pode reenviar a solicitação. Para uso fora do ambiente local, configure uma senha administrativa privada e não compartilhe credenciais.
 
 ### Pedidos e pagamentos demonstrativos
 
 O checkout salva o endereço do cliente, uma cópia dos dados de entrega no pedido, as observações, os itens com preço e nome registrados no momento da compra, a forma/status do pagamento e o status de entrega. O estoque do kit e o preço são conferidos no servidor e o estoque é atualizado junto com o pedido.
 
-O pagamento é apenas simulado. No caso de cartão, o protótipo aceita somente bandeira e quatro dígitos fictícios para demonstração; nunca solicita nem armazena número completo, validade ou CVV. Não use dados reais de cartão.
+O checkout oferece Pix simulado e dinheiro na entrega. A simulação Pix pede banco, titular e CPF para apresentar o fluxo, mas não se conecta a banco: use dados fictícios. O banco salva somente os quatro últimos dígitos do CPF e não solicita senha, agência ou conta. O link `pix-simulado.html` apenas muda o status demonstrativo do pedido.
 
 ## Validações de segurança implementadas
 

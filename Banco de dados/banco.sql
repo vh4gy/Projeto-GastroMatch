@@ -30,6 +30,23 @@ CREATE TABLE IF NOT EXISTS perfis_criadores (
     FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS verificacoes_criadores (
+    id_verificacao INT AUTO_INCREMENT PRIMARY KEY,
+    id_usuario INT NOT NULL UNIQUE,
+    empresa VARCHAR(150) NOT NULL,
+    cnpj VARCHAR(14) NOT NULL,
+    relato_profissional TEXT NOT NULL,
+    link_evidencia VARCHAR(500) NULL,
+    status ENUM('pendente','aprovado','reprovado') NOT NULL DEFAULT 'pendente',
+    parecer_revisor VARCHAR(1000) NULL,
+    revisado_por INT NULL,
+    criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    analisado_em DATETIME NULL,
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE CASCADE,
+    FOREIGN KEY (revisado_por) REFERENCES usuarios(id_usuario) ON DELETE SET NULL,
+    INDEX idx_verificacoes_status_data (status, criado_em)
+);
+
 CREATE TABLE IF NOT EXISTS receitas (
     id_receita INT AUTO_INCREMENT PRIMARY KEY,
     id_criador INT NOT NULL,
@@ -47,6 +64,19 @@ CREATE TABLE IF NOT EXISTS receitas (
     criado_pelo_chef TINYINT(1) NOT NULL DEFAULT 1,
     data_publicacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (id_criador) REFERENCES usuarios(id_usuario)
+);
+
+CREATE TABLE IF NOT EXISTS avaliacoes_receitas (
+    id_avaliacao INT AUTO_INCREMENT PRIMARY KEY,
+    id_receita INT NOT NULL,
+    id_usuario INT NOT NULL,
+    nota TINYINT UNSIGNED NOT NULL,
+    comentario VARCHAR(1000) NOT NULL DEFAULT '',
+    data_avaliacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_avaliacao_receita_usuario (id_receita, id_usuario),
+    KEY idx_avaliacao_receita_data (id_receita, data_avaliacao),
+    FOREIGN KEY (id_receita) REFERENCES receitas(id_receita) ON DELETE CASCADE,
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS receitas_restricoes (
@@ -132,7 +162,7 @@ CREATE TABLE IF NOT EXISTS pedidos (
 CREATE TABLE IF NOT EXISTS pagamentos (
     id_pagamento INT AUTO_INCREMENT PRIMARY KEY,
     id_pedido INT NOT NULL,
-    metodo ENUM('pix','cartao','boleto','transferencia') NOT NULL,
+    metodo ENUM('pix','dinheiro','cartao','boleto','transferencia') NOT NULL,
     status ENUM('pendente','aprovado','recusado','estornado') NOT NULL DEFAULT 'pendente',
     valor DECIMAL(10,2) NOT NULL,
     moeda CHAR(3) NOT NULL DEFAULT 'BRL',
@@ -140,6 +170,10 @@ CREATE TABLE IF NOT EXISTS pagamentos (
     referencia_transacao VARCHAR(80) NULL UNIQUE,
     bandeira_cartao VARCHAR(20) NULL,
     ultimos_quatro CHAR(4) NULL,
+    banco_pagador VARCHAR(80) NULL,
+    titular_pagador VARCHAR(100) NULL,
+    cpf_final4 CHAR(4) NULL,
+    link_pagamento VARCHAR(255) NULL,
     parcelas TINYINT UNSIGNED NOT NULL DEFAULT 1,
     criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -164,7 +198,7 @@ CREATE TABLE IF NOT EXISTS itens_pedido (
 
 INSERT INTO usuarios (id_usuario, nome, email, senha_hash, codigo_acesso, tipo_usuario, telefone, foto_perfil, data_cadastro)
 VALUES
-(1, 'Administrador GastroMatch', 'admin@gastromatch.com.br', '$2y$10$3sT8e2O8iNmhA4A5n2Hk2uY0m9m7k5j3p2M5EwHh4A9wP1q7vUjO', 'GM-ADM-2026', 'admin', '(11) 3000-0001', '', '2026-01-01'),
+(1, 'Administrador GastroMatch', 'admin@gastromatch.com.br', '$2y$12$S/ctHWTulZ0hAaxv3O74P.WvhYDQZosHtr3n.xVKfCR8lQ6fC.bgK', 'GM-ADM-2026', 'admin', '(11) 3000-0001', '', '2026-01-01'),
 (2, 'Chef GastroMatch', 'chef@gastromatch.com.br', '$2y$10$3sT8e2O8iNmhA4A5n2Hk2uY0m9m7k5j3p2M5EwHh4A9wP1q7vUjO', 'GM-CHEF-2026', 'chef', '(11) 98888-0002', '', '2026-01-02'),
 (10, 'Cliente GastroMatch', 'cliente@gastromatch.com.br', '$2y$10$3sT8e2O8iNmhA4A5n2Hk2uY0m9m7k5j3p2M5EwHh4A9wP1q7vUjO', 'GM-CLI-2026', 'cliente', '(11) 97777-0003', '', '2026-01-03')
 ON DUPLICATE KEY UPDATE nome = VALUES(nome), email = VALUES(email), codigo_acesso = VALUES(codigo_acesso), tipo_usuario = VALUES(tipo_usuario);
@@ -176,11 +210,11 @@ ON DUPLICATE KEY UPDATE biografia = VALUES(biografia), link_portfolio = VALUES(l
 
 INSERT INTO receitas (id_receita, id_criador, titulo, descricao_introducao, rendimento, tempo_preparo_minutos, nivel_dificuldade, tipo_acesso, preco_conteudo, img, pais, nota, avaliacoes, criado_pelo_chef, data_publicacao)
 VALUES
-(1, 2, 'Pastel de Queijo com Molho Vinagrete', 'Pastel crocante recheado com queijo e servido com vinagrete.', 8, 45, 'medio', 'gratuito', 0.00, 'img/pastel.png', 'br', 4.9, 85, 1, '2026-01-05 12:00:00'),
-(2, 2, 'Poutine', 'Batatas crocantes, queijo e molho gravy em um clássico reconfortante.', 4, 20, 'facil', 'gratuito', 0.00, 'img/poutine.png', 'ca', 4.0, 67, 1, '2026-01-06 12:00:00'),
-(3, 2, 'Carbonara', 'Massa cremosa finalizada com gemas, queijo, pimenta e guanciale.', 2, 20, 'facil', 'gratuito', 0.00, 'img/carbonara.png', 'it', 4.0, 99, 1, '2026-01-07 12:00:00'),
-(4, 2, 'Tacos', 'Tacos crocantes com carne temperada, vegetais e queijo.', 4, 25, 'facil', 'gratuito', 0.00, 'img/tacos.png', 'mx', 4.7, 52, 1, '2026-01-08 12:00:00'),
-(5, 2, 'Camarão Empanado', 'Camarões dourados e crocantes, empanados com farinha panko.', 4, 30, 'medio', 'gratuito', 0.00, 'img/camarao.png', '', 4.5, 38, 1, '2026-01-09 12:00:00')
+(1, 2, 'Pastel de Queijo com Molho Vinagrete', 'Pastel crocante recheado com queijo e servido com vinagrete.', 8, 45, 'medio', 'gratuito', 0.00, 'img/pastel.png', 'br', 0.0, 0, 1, '2026-01-05 12:00:00'),
+(2, 2, 'Poutine', 'Batatas crocantes, queijo e molho gravy em um clássico reconfortante.', 4, 20, 'facil', 'gratuito', 0.00, 'img/poutine.png', 'ca', 0.0, 0, 1, '2026-01-06 12:00:00'),
+(3, 2, 'Carbonara', 'Massa cremosa finalizada com gemas, queijo, pimenta e guanciale.', 2, 20, 'facil', 'gratuito', 0.00, 'img/carbonara.png', 'it', 0.0, 0, 1, '2026-01-07 12:00:00'),
+(4, 2, 'Tacos', 'Tacos crocantes com carne temperada, vegetais e queijo.', 4, 25, 'facil', 'gratuito', 0.00, 'img/tacos.png', 'mx', 0.0, 0, 1, '2026-01-08 12:00:00'),
+(5, 2, 'Camarão Empanado', 'Camarões dourados e crocantes, empanados com farinha panko.', 4, 30, 'medio', 'gratuito', 0.00, 'img/camarao.png', '', 0.0, 0, 1, '2026-01-09 12:00:00')
 ON DUPLICATE KEY UPDATE titulo = VALUES(titulo), descricao_introducao = VALUES(descricao_introducao), rendimento = VALUES(rendimento), tempo_preparo_minutos = VALUES(tempo_preparo_minutos), nivel_dificuldade = VALUES(nivel_dificuldade), tipo_acesso = VALUES(tipo_acesso), preco_conteudo = VALUES(preco_conteudo), img = VALUES(img), pais = VALUES(pais), nota = VALUES(nota), avaliacoes = VALUES(avaliacoes);
 
 INSERT INTO receitas_restricoes (id_receita, restricao)

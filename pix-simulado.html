@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7941d">
+  <title>Pix de demonstração — GastroMatch</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Open+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="Estilo/estilo.css?v=20261030-2">
+</head>
+<body class="pix-demo">
+  <header class="site-header">
+    <div class="topbar">
+      <a class="marca" href="index.html#inicio" aria-label="GastroMatch, início">
+        <span class="marca-icone" aria-hidden="true">G</span>
+        <span><strong>GastroMatch</strong><small>pagamento demonstrativo</small></span>
+      </a>
+    </div>
+  </header>
+  <main class="pix-pagina">
+    <a class="pix-voltar" href="index.html#inicio">← Voltar ao site</a>
+    <section class="pix-painel" aria-labelledby="pixTitulo">
+      <span class="eyebrow">simulação local • sem transferência real</span>
+      <h1 id="pixTitulo">Pix de demonstração</h1>
+      <p class="pix-intro">Esta página representa o fluxo de pagamento. Nenhum banco será acessado e nenhum valor será transferido.</p>
+      <div id="pixCarregando" class="pix-status" role="status">Carregando os dados do pedido...</div>
+      <div id="pixConteudo" hidden>
+        <div class="pix-valor"><span>Valor do pedido</span><strong id="pixValor">R$ 0,00</strong></div>
+        <dl class="pix-dados">
+          <div><dt>Recebedor</dt><dd>GastroMatch • ambiente de demonstração</dd></div>
+          <div><dt>Referência</dt><dd id="pixReferencia"></dd></div>
+          <div><dt>Banco informado</dt><dd id="pixBanco"></dd></div>
+          <div><dt>Titular</dt><dd id="pixTitular"></dd></div>
+          <div><dt>CPF</dt><dd id="pixCpf"></dd></div>
+          <div><dt>Chave ilustrativa</dt><dd id="pixChave"></dd></div>
+          <div><dt>Status</dt><dd id="pixStatus">Pendente</dd></div>
+        </dl>
+        <div class="pix-aviso"><strong>Não pague de verdade.</strong> A chave e a referência acima são fictícias e servem apenas para apresentar o fluxo.</div>
+        <button id="pixConfirmar" class="btn" type="button">Simular confirmação do Pix</button>
+        <p id="pixMensagem" class="pix-mensagem" role="status" aria-live="polite"></p>
+        <a id="pixVoltarInicio" class="btn btn-ghost" href="index.html#inicio" hidden>Voltar ao GastroMatch</a>
+      </div>
+    </section>
+  </main>
+  <script src="Codigo/pix-simulado.js?v=20261030-1"></script>
+</body>
+</html>

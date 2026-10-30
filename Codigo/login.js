@@ -7,7 +7,7 @@ const ACESSOS = {
     label: 'Chef / Criador', email: 'chef@gastromatch.com.br', code: 'GM-CHEF-2026', redirect: 'index.html#chef', tipoUsuario: 'chef', idUsuario: 2
   },
   admin: {
-    label: 'Administrador', email: 'admin@gastromatch.com.br', code: 'GM-ADM-2026', redirect: 'AreaRestrita/painel.html', tipoUsuario: 'admin', idUsuario: 1
+    label: 'Administrador', email: 'admin@gastromatch.com.br', redirect: 'AreaRestrita/painel.html', tipoUsuario: 'admin', idUsuario: 1
   }
 };
 
@@ -95,7 +95,7 @@ function salvarSessao(dados, role){
 
 async function enviarRequisicaoApi(action, dados, mensagemFalha) {
   if (window.location.protocol === 'file:') {
-    throw new Error('O projeto foi aberto diretamente como arquivo. Inicie o Apache no XAMPP e acesse http://localhost:8090/Projeto-GastroMatch/login.html para que o PHP e o banco funcionem.');
+    throw new Error('O projeto foi aberto diretamente como arquivo. Inicie o Apache no XAMPP e acesse esta página pelo endereço HTTP ou HTTPS do servidor para que o PHP e o banco funcionem.');
   }
 
   const url = new URL(`api.php?action=${encodeURIComponent(action)}`, window.location.href);
@@ -107,7 +107,7 @@ async function enviarRequisicaoApi(action, dados, mensagemFalha) {
       body: JSON.stringify(dados)
     });
   } catch {
-    throw new Error(`Não foi possível acessar a API PHP em ${url}. Abra o projeto pelo Apache em http://localhost:8090/Projeto-GastroMatch/login.html, não por file://, e confira se o Apache está ativo.`);
+    throw new Error(`Não foi possível acessar a API PHP em ${url}. Abra o projeto pelo endereço HTTP ou HTTPS do Apache, não por file://, e confira se o Apache está ativo.`);
   }
 
   let payload;
@@ -186,6 +186,9 @@ async function criarConta(e){
   const confirmar = $('#registroConfirmarSenha').value;
   const tipo = $('#registroTipo').value;
   const cnpj = $('#registroCnpj')?.value ? formatarCnpj($('#registroCnpj').value) : '';
+  const empresa = $('#registroEmpresa')?.value.trim() || '';
+  const relatoProfissional = $('#registroRelato')?.value.trim() || '';
+  const linkEvidencia = $('#registroEvidencia')?.value.trim() || '';
   const verificacao2fa = $('#registroVerificacao')?.checked ? 1 : 0;
 
   if (!nome || !email || !senha || !confirmar) {
@@ -210,14 +213,19 @@ async function criarConta(e){
   }
   if (['chef', 'restaurante'].includes(tipo)) {
     if (!validarCnpjFormato(cnpj)) {
-      msg.textContent = 'Informe 14 dígitos para o CNPJ. A consulta de autenticidade será feita pela API quando integrada.';
+      msg.textContent = 'Informe os 14 dígitos do CNPJ da empresa ou do perfil profissional.';
+      msg.className = 'login-msg erro';
+      return;
+    }
+    if (!empresa || relatoProfissional.length < 40) {
+      msg.textContent = 'Informe a empresa e descreva sua experiência profissional em pelo menos 40 caracteres.';
       msg.className = 'login-msg erro';
       return;
     }
   }
 
   try {
-    const usuario = await criarContaNoBanco({ nome, email, password: senha, tipo_usuario: tipo, cnpj, verificacao_2fa: verificacao2fa });
+    const usuario = await criarContaNoBanco({ nome, email, password: senha, tipo_usuario: tipo, cnpj, empresa, relato_profissional: relatoProfissional, link_evidencia: linkEvidencia, verificacao_2fa: verificacao2fa });
     if (usuario.verificacao_2fa === 1 && usuario.email_verificado === 0) {
       localStorage.setItem('gm_verificacao_email', JSON.stringify({ email, codigo: usuario.email_verificacao_codigo || '' }));
       msg.textContent = `Conta criada com sucesso. Código de verificação: ${usuario.email_verificacao_codigo || 'N/A'} — informe-o ao entrar.`;
@@ -258,7 +266,12 @@ function toggleSenha(){
 function atualizarCamposRegistro() {
   const tipo = $('#registroTipo')?.value || 'cliente';
   const campoCnpj = $('#campoCnpj');
-  if (campoCnpj) campoCnpj.hidden = !['chef', 'restaurante'].includes(tipo);
+  const camposVerificacao = $('#camposVerificacaoChef');
+  const criador = ['chef', 'restaurante'].includes(tipo);
+  if (campoCnpj) campoCnpj.hidden = !criador;
+  if (camposVerificacao) camposVerificacao.hidden = !criador;
+  if ($('#registroEmpresa')) $('#registroEmpresa').required = criador;
+  if ($('#registroRelato')) $('#registroRelato').required = criador;
 }
 
 $('#registroTipo')?.addEventListener('change', atualizarCamposRegistro);

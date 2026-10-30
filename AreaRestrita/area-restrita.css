@@ -24,6 +24,22 @@
 .legend-bar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}.legend-bar>span{padding:5px 8px;border:1px solid #b8cbdc;border-radius:3px;font-size:.66rem}.legend-table{background:var(--navy);color:#fff}.legend-pk{background:var(--yellow)}.legend-fk{background:var(--green)}.legend-normal{background:#fff}.db-group{margin-bottom:20px}.group-title{display:flex;align-items:center;justify-content:space-between;margin:0 0 9px}.group-title>div{display:flex;gap:10px;align-items:center}.group-index{width:28px;height:28px;border-radius:6px;background:var(--navy);color:#fff;display:grid;place-items:center;font-size:.65rem;font-weight:700}.group-title h2{font:700 1.25rem 'Fredoka',sans-serif;color:var(--navy);margin:0}.group-title p{margin:1px 0 0;color:#73879b;font-size:.67rem}.group-count{font-size:.66rem;color:#6c8298}.db-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.db-card{background:#fff;border:1px solid #b9cbdd;overflow:hidden}.db-head{background:var(--navy);color:#fff;padding:7px 9px;display:flex;justify-content:space-between;align-items:center}.db-head strong{font-size:.74rem}.db-head span{display:block;font-size:.57rem;color:#bcd0e1;margin-top:2px}.copy-table{border:0;background:rgba(255,255,255,.08);color:#d5e5f2;width:25px;height:24px;border-radius:4px}.db-desc{padding:7px 8px;font-size:.61rem;color:#6e8295;line-height:1.45;border-bottom:1px solid #d4e0ea}.db-grid{display:grid;grid-template-columns:1.15fr .8fr .95fr}.db-grid-title{background:#eaf1f7;color:#45617d;font-size:.55rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em}.db-grid-title span{padding:6px 7px;border-right:1px solid #c9d6e2}.db-row{display:grid;grid-template-columns:1.15fr .8fr .95fr;font-size:.62rem;background:#fff;border-top:1px solid #dfe8ef;min-height:26px}.db-row>span{padding:6px 7px;border-right:1px solid #edf2f6}.db-row.pk-row .db-field,.db-row.pk-row .db-type,.db-row.pk-row .db-ref{background:var(--yellow)}.db-row.fk-row .db-field,.db-row.fk-row .db-type,.db-row.fk-row .db-ref{background:var(--green)}.db-field{font-weight:500;color:#224566}.db-type{color:#687e94}.db-ref{color:#4a6c87}.db-badge{display:inline-flex;margin-left:4px;font-size:.48rem;padding:1px 3px;border-radius:2px;vertical-align:middle}.db-pk{background:#0f2d53;color:#fff}.db-fk{background:#2a7650;color:#fff}
 
 /* relations */
+.review-list{display:grid;gap:12px}
+.review-card{padding:18px;background:#fff;border:1px solid #bfd1e2;border-radius:8px;box-shadow:0 5px 16px rgba(24,55,89,.04)}
+.review-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
+.review-head h2{margin:4px 0;font:700 1.35rem 'Fredoka',sans-serif;color:var(--navy)}
+.review-head h2 small{font:500 .8rem 'Open Sans',sans-serif;color:var(--muted)}
+.review-head p{margin:0;color:var(--muted);font-size:.75rem}
+.review-details{display:grid;gap:12px;margin:17px 0}
+.review-details dt{font-size:.65rem;font-weight:700;color:#66809a;text-transform:uppercase;letter-spacing:.06em}
+.review-details dd{margin:4px 0 0;color:#435d75;font-size:.78rem;line-height:1.55;overflow-wrap:anywhere;white-space:pre-wrap}
+.review-details a{color:var(--navy);font-weight:700;text-decoration:underline}
+.review-form{border-top:1px solid #d5e0e9;padding-top:14px}
+.review-actions{display:flex;justify-content:flex-end;gap:9px;flex-wrap:wrap;margin-top:8px}
+.review-actions .primary-btn{width:auto;margin:0;padding:10px 13px}
+.review-actions button:disabled{opacity:.6;cursor:wait}
+.review-empty{padding:20px;color:var(--muted);font-size:.8rem}
+
 .relation-table{margin-top:18px;border:1px solid #c4d3df}.relation-head,.relation-row{display:grid;grid-template-columns:1.05fr 1.55fr 1.7fr}.relation-head{background:var(--navy);color:#fff;font-weight:700;font-size:.67rem}.relation-head>div,.relation-row>div{padding:8px 9px;border-right:1px solid #c4d3df}.relation-row{background:#fff;border-top:1px solid #c4d3df;font-size:.65rem;line-height:1.5}.relation-row:nth-child(even){background:#f8fbfd}.relation-link{font-weight:700;color:#264f74}.two-note-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}.note-card{background:#f7fafc;border:1px solid #c8d8e5;padding:13px;border-radius:10px;display:grid;gap:4px}.note-card b{font-size:.75rem;color:var(--navy)}.note-card span{font-size:.67rem;color:#687d91;line-height:1.5}
 
 /* form */

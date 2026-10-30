@@ -14,7 +14,7 @@
 const receitasBase = [
   {
     id_receita: 2, titulo: 'Poutine', pais: 'ca', img: 'img/poutine.png',
-    nota: 4.0, avaliacoes: '67', nivel_dificuldade: 'facil', tempo_preparo_minutos: 20,
+    nota: 0, avaliacoes: '0', nivel_dificuldade: 'facil', tempo_preparo_minutos: 20,
     rendimento: 4, tipo_acesso: 'gratuito', preco_conteudo: 0,
     preco_kit: 25.99, estoque_disponivel: 20,
     restricoes: [],
@@ -30,7 +30,7 @@ const receitasBase = [
   },
   {
     id_receita: 3, titulo: 'Carbonara', pais: 'it', img: 'img/carbonara.png',
-    nota: 4.0, avaliacoes: '99+', nivel_dificuldade: 'facil', tempo_preparo_minutos: 20,
+    nota: 0, avaliacoes: '0', nivel_dificuldade: 'facil', tempo_preparo_minutos: 20,
     rendimento: 2, tipo_acesso: 'gratuito', preco_conteudo: 0,
     preco_kit: 11.99, estoque_disponivel: 20,
     restricoes: [],
@@ -46,7 +46,7 @@ const receitasBase = [
   },
   {
     id_receita: 1, titulo: 'Pastel de Queijo com Molho Vinagrete', pais: 'br', img: 'img/pastel.png',
-    nota: 4.9, avaliacoes: '85', nivel_dificuldade: 'medio', tempo_preparo_minutos: 45,
+    nota: 0, avaliacoes: '0', nivel_dificuldade: 'medio', tempo_preparo_minutos: 45,
     rendimento: 8, tipo_acesso: 'gratuito', preco_conteudo: 0,
     preco_kit: 14.89, estoque_disponivel: 20,
     restricoes: [],
@@ -61,7 +61,7 @@ const receitasBase = [
   },
   {
     id_receita: 4, titulo: 'Tacos', pais: 'mx', img: 'img/tacos.png',
-    nota: 4.7, avaliacoes: '52', nivel_dificuldade: 'facil', tempo_preparo_minutos: 25,
+    nota: 0, avaliacoes: '0', nivel_dificuldade: 'facil', tempo_preparo_minutos: 25,
     rendimento: 4, tipo_acesso: 'gratuito', preco_conteudo: 0,
     preco_kit: 19.90, estoque_disponivel: 20,
     restricoes: [],
@@ -76,7 +76,7 @@ const receitasBase = [
   },
   {
     id_receita: 5, titulo: 'Camarão Empanado', pais: '', img: 'img/camarao.png',
-    nota: 4.5, avaliacoes: '38', nivel_dificuldade: 'medio', tempo_preparo_minutos: 30,
+    nota: 0, avaliacoes: '0', nivel_dificuldade: 'medio', tempo_preparo_minutos: 30,
     rendimento: 4, tipo_acesso: 'gratuito', preco_conteudo: 0,
     preco_kit: 32.90, estoque_disponivel: 20,
     restricoes: [],
@@ -153,11 +153,16 @@ async function atualizarPerfilDoBanco() {
       email: usuario.email || auth.email || '',
       telefone: usuario.telefone || '',
       tipo_usuario: usuario.tipo_usuario || auth.role,
+      cnpj: usuario.cnpj || '',
       data_cadastro: usuario.data_cadastro || new Date().toISOString().slice(0, 10),
       foto_perfil: usuario.foto_perfil || '',
       biografia: usuario.biografia || '',
       link_portfolio: usuario.link_portfolio || '',
-      status_validacao: usuario.status_validacao || 'pendente'
+      status_validacao: usuario.status_validacao || 'pendente',
+      verificacao_empresa: usuario.verificacao_empresa || '',
+      verificacao_relato: usuario.verificacao_relato || '',
+      verificacao_link: usuario.verificacao_link || '',
+      verificacao_parecer: usuario.verificacao_parecer || ''
     };
 
     perfilAtual = { ...perfilVisitante, ...perfilBanco };
@@ -375,8 +380,9 @@ async function confirmarPagamento(event) {
       cidade: form.elements.endereco_cidade.value.trim(),
       estado: form.elements.endereco_estado.value.trim()
     },
-    cartao_bandeira: form.elements.cartao_bandeira?.value || '',
-    cartao_ultimos4: form.elements.cartao_ultimos4?.value || '',
+    pix_banco: form.elements.pix_banco?.value || '',
+    pix_titular: form.elements.pix_titular?.value.trim() || '',
+    pix_cpf: form.elements.pix_cpf?.value || '',
     itens
   };
 
@@ -392,7 +398,14 @@ async function confirmarPagamento(event) {
       throw new Error(payload.message || 'Não foi possível registrar o pedido no banco.');
     }
 
-    cesta = []; salvarCesta(); toast(`Pedido #${payload.data.id_pedido} registrado no modo demonstração.`); location.hash = '#inicio';
+    cesta = []; salvarCesta();
+    if (metodo === 'pix' && payload.data.link_pagamento) {
+      toast(`Pedido #${payload.data.id_pedido} criado. Abra a simulação Pix.`);
+      window.location.href = payload.data.link_pagamento;
+      return;
+    }
+    toast(`Pedido #${payload.data.id_pedido} registrado para pagamento em dinheiro na entrega.`);
+    location.hash = '#inicio';
     return;
   } catch (erro) {
     toast(erro.message || 'Não foi possível registrar o pedido. O carrinho foi mantido.');
@@ -493,6 +506,8 @@ const telas = {
   perfil() {
     perfilAtual = carregarPerfil();
     const criador = ['chef', 'restaurante'].includes(perfilAtual.tipo_usuario);
+    const statusVerificacao = perfilAtual.status_validacao || 'pendente';
+    const statusDescricao = statusVerificacao === 'aprovado' ? 'Aprovado pela equipe' : statusVerificacao === 'reprovado' ? 'Precisa de mais informações' : 'Aguardando análise humana';
     return `<section class="pagina perfil-pagina">
       <div class="perfil-capa"><div class="perfil-hero-avatar">${avatar(perfilAtual, 'avatar avatar-grande')}</div><div class="perfil-resumo">
         <span class="pill">${tipoLabel(perfilAtual.tipo_usuario)}</span><h1>${esc(perfilAtual.nome)}</h1><p>${esc(perfilAtual.email)}</p>
@@ -510,10 +525,11 @@ const telas = {
         ${criador ? `<div class="subseção"><div><span class="eyebrow">perfil profissional</span><h3>Informações do criador</h3></div><div class="form-grid">
           <label class="campo campo-span"><span>Biografia</span><textarea name="biografia" maxlength="500" rows="5" placeholder="Conte um pouco sobre sua cozinha...">${esc(perfilAtual.biografia)}</textarea></label>
           <label class="campo campo-span"><span>Link do portfólio</span><input name="link_portfolio" type="url" maxlength="250" value="${esc(perfilAtual.link_portfolio)}" placeholder="https://..."></label>
-          <div class="info-box campo-span"><strong>Validação da plataforma:</strong> ${esc(perfilAtual.status_validacao || 'pendente')}. O status e os documentos de validação são gerenciados pela plataforma.</div>
+          <div class="info-box campo-span"><strong>Verificação profissional:</strong> ${esc(statusDescricao)}.${perfilAtual.verificacao_parecer ? `<br><strong>Parecer da equipe:</strong> ${esc(perfilAtual.verificacao_parecer)}` : ''}${perfilAtual.verificacao_relato ? `<br><strong>Relato enviado:</strong> ${esc(perfilAtual.verificacao_relato)}` : ''}${perfilAtual.verificacao_link ? `<br><a href="${esc(perfilAtual.verificacao_link)}" target="_blank" rel="noopener">Abrir evidência enviada</a>` : ''}</div>
         </div></div>` : `<div class="info-box">Seu perfil de cliente usa os dados da tabela <strong>usuarios</strong>. Quando a conta for de chef/restaurante, os campos profissionais da tabela <strong>perfis_criadores</strong> aparecem aqui.</div>`}
         <div class="form-acoes"><a class="btn btn-ghost" href="#inicio">Cancelar</a><button class="btn" type="submit">Salvar alterações</button></div>
       </form>
+      ${criador && statusVerificacao === 'reprovado' ? `<form class="form-card reenviar-verificacao" onsubmit="reenviarVerificacao(event)"><div class="form-topo"><div><span class="eyebrow">nova análise</span><h2>Atualizar evidências</h2></div></div><label class="campo"><span>Empresa ou estabelecimento</span><input name="empresa" type="text" maxlength="150" required value="${esc(perfilAtual.verificacao_empresa)}"></label><label class="campo"><span>CNPJ</span><input name="cnpj" type="text" inputmode="numeric" maxlength="18" required value="${esc(perfilAtual.cnpj || '')}"></label><label class="campo"><span>Relato profissional (mínimo 40 caracteres)</span><textarea name="relato_profissional" minlength="40" maxlength="3000" rows="4" required>${esc(perfilAtual.verificacao_relato)}</textarea></label><label class="campo"><span>Link de evidência (opcional)</span><input name="link_evidencia" type="url" maxlength="500" value="${esc(perfilAtual.verificacao_link)}"></label><button class="btn" type="submit">Reenviar para análise</button><p class="avaliacao-mensagem" role="status" aria-live="polite"></p></form>` : ''}
       <aside class="perfil-lateral">${criador ? `<div class="mini-card mini-chef"><span class="eyebrow">modo chef</span><h3>Publicar receitas</h3><p>Cadastre pratos, descreva o preparo e marque as <strong>restrições alimentares</strong> antes de publicar.</p><a href="#novareceita" class="btn">+ Nova receita</a><a href="#chef" class="btn btn-ghost">Ver minhas receitas</a></div>` : `<div class="mini-card mini-chef"><span class="eyebrow">demonstração</span><h3>Testar como Chef</h3><p>Ative o modo de chef para navegar pelas telas de criação de receitas do protótipo.</p><button class="btn" type="button" onclick="ativarModoChef()">Entrar como Chef</button></div>`}
         <div class="mini-card"><span class="eyebrow">sobre a conta</span><h3>Privacidade</h3><p>A senha não é editada por esta tela. No sistema real, ela deve continuar armazenada apenas como hash no servidor.</p></div>
         <div class="mini-card"><span class="eyebrow">estrutura do projeto</span><h3>Campos do banco</h3><div class="campo-lista"><span>✓</span> usuarios</div><div class="campo-lista"><span>✓</span> perfis_criadores</div><div class="campo-lista"><span>✓</span> status_validacao</div><div class="campo-lista"><span>✓</span> foto_perfil</div></div>
@@ -524,6 +540,10 @@ const telas = {
     perfilAtual = carregarPerfil();
     if (!['chef', 'restaurante'].includes(perfilAtual.tipo_usuario)) {
       return `<section class="pagina vazio"><div class="icone-vazio">👨‍🍳</div><h2>Painel do Chef</h2><p>Esta área é exclusiva para contas de chef ou restaurante.</p><a class="btn" href="#perfil">Abrir perfil</a></section>`;
+    }
+    if (perfilAtual.status_validacao !== 'aprovado') {
+      const reprovado = perfilAtual.status_validacao === 'reprovado';
+      return `<section class="pagina vazio"><div class="icone-vazio">👨‍🍳</div><h2>${reprovado ? 'Verificação precisa de ajustes' : 'Verificação em análise'}</h2><p>${reprovado ? esc(perfilAtual.verificacao_parecer || 'A equipe precisa de mais informações para aprovar seu perfil.') : 'A equipe está analisando os dados profissionais enviados. O painel de publicação será liberado após a aprovação.'}</p><a class="btn" href="#perfil">Ver status e evidências</a></section>`;
     }
     const minhas = receitas.filter(r => r.criado_pelo_chef && r.id_criador === perfilAtual.id_usuario);
     return `<section class="pagina pagina-chef"><div class="chef-banner"><div><span class="eyebrow">área do criador</span><h2>Painel do Chef</h2><p>Gerencie suas receitas, restrições alimentares e conteúdos exclusivos.</p></div><div class="chef-banner-acoes"><a class="btn" href="#novareceita">+ Adicionar receita</a><a class="btn btn-light" href="#perfil">Editar perfil</a></div></div>
@@ -536,6 +556,7 @@ const telas = {
   novareceita() {
     perfilAtual = carregarPerfil();
     if (!['chef', 'restaurante'].includes(perfilAtual.tipo_usuario)) return telas.chef();
+    if (perfilAtual.status_validacao !== 'aprovado') return telas.chef();
     const temp = window.receitaRascunho || {};
     return `<section class="pagina pagina-nova-receita"><div class="pagina-cabecalho"><div><span class="eyebrow">área do criador</span><h2>Adicionar nova receita</h2><p>Preencha os dados da receita e selecione as restrições alimentares correspondentes.</p></div><a href="#chef" class="btn btn-ghost">← Voltar ao painel</a></div>
       <form class="receita-form" id="receitaForm" onsubmit="publicarReceita(event)">
@@ -586,10 +607,8 @@ const telas = {
       <div class="pagamento-layout">
         <form class="form-card pagamento-card" id="pagamentoForm" onsubmit="confirmarPagamento(event)">
           <div class="pagamento-opcoes">
-            <label class="payment-option"><input type="radio" name="metodo_pagamento" value="pix" checked><span>PIX</span></label>
-            <label class="payment-option"><input type="radio" name="metodo_pagamento" value="cartao"><span>Cartão</span></label>
-            <label class="payment-option"><input type="radio" name="metodo_pagamento" value="boleto"><span>Boleto</span></label>
-            <label class="payment-option"><input type="radio" name="metodo_pagamento" value="transferencia"><span>Transferência</span></label>
+            <label class="payment-option"><input type="radio" name="metodo_pagamento" value="pix" checked><span>Pix simulado</span></label>
+            <label class="payment-option"><input type="radio" name="metodo_pagamento" value="dinheiro"><span>Dinheiro na entrega</span></label>
           </div>
 
           <div class="form-grid">
@@ -606,39 +625,23 @@ const telas = {
 
           <div class="payment-extra">
             <div class="payment-box pix-box">
-              <strong>PIX</strong>
-              <p>Chave: gastromatch@pix.com.br</p>
-              <small>Pagamento instantâneo e confirmado em minutos.</small>
-            </div>
-            <div class="payment-box cartao-box" hidden>
-              <strong>Cartão de demonstração</strong>
+              <strong>Pix de demonstração</strong>
+              <p>Nenhuma transferência real será feita. Após criar o pedido, você receberá um link local para simular a confirmação.</p>
               <div class="form-grid">
-                <label class="campo"><span>Bandeira</span>
-                  <select name="cartao_bandeira">
-                    <option value="">Selecione</option>
-                    <option value="visa">Visa</option>
-                    <option value="mastercard">Mastercard</option>
-                    <option value="elo">Elo</option>
-                    <option value="amex">American Express</option>
-                    <option value="hipercard">Hipercard</option>
-                    <option value="outro">Outra</option>
-                  </select>
-                </label>
-                <label class="campo"><span>Últimos 4 dígitos (fictícios)</span><input name="cartao_ultimos4" type="text" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" placeholder="1234"></label>
+                <label class="campo"><span>Banco usado na simulação</span><select name="pix_banco" data-pix-required><option value="">Selecione</option><option value="banco_do_brasil">Banco do Brasil</option><option value="caixa">Caixa</option><option value="itau">Itaú</option><option value="bradesco">Bradesco</option><option value="santander">Santander</option><option value="inter">Inter</option><option value="nubank">Nubank</option><option value="outro">Outro</option></select></label>
+                <label class="campo"><span>Nome do titular</span><input name="pix_titular" type="text" maxlength="100" autocomplete="off" data-pix-required></label>
+                <label class="campo campo-span"><span>CPF fictício do pagador</span><input name="pix_cpf" type="text" inputmode="numeric" maxlength="14" autocomplete="off" placeholder="000.000.000-00" data-pix-required></label>
               </div>
-              <small>Protótipo: não informe número completo, validade ou código de segurança. Nenhum dado real de cartão é processado.</small>
+              <small class="aviso-pix">Demonstração acadêmica: não informe senha, agência, número de conta nem dados bancários reais. O CPF completo não será salvo; o banco guarda somente os quatro últimos dígitos.</small>
             </div>
-            <div class="payment-box boleto-box" hidden>
-              <strong>Boleto Bancário</strong>
-              <p>O boleto será enviado para o e-mail cadastrado e vence em 3 dias úteis.</p>
-            </div>
-            <div class="payment-box transferencia-box" hidden>
-              <strong>Transferência</strong>
-              <p>Banco do Brasil • Agência 0001 • Conta 123456-7</p>
+            <div class="payment-box dinheiro-box" hidden>
+              <strong>Dinheiro na entrega</strong>
+              <p>O pagamento ficará pendente e será feito diretamente ao entregador quando o pedido chegar.</p>
+              <small>Nenhum dado bancário é necessário.</small>
             </div>
           </div>
 
-          <div class="form-acoes"><button class="btn" type="submit">Confirmar pagamento</button></div>
+          <div class="form-acoes"><button class="btn" type="submit">Criar pedido</button></div>
         </form>
 
         <aside class="resumo-pedido">
@@ -831,7 +834,9 @@ async function publicarReceitaNoBanco(dados) {
 
   const payload = await resposta.json().catch(() => ({ success: false, message: 'Não foi possível salvar a receita no banco.' }));
   if (!resposta.ok || !payload.success) {
-    throw new Error(payload.message || 'Não foi possível salvar a receita no banco.');
+    const erro = new Error(payload.message || 'Não foi possível salvar a receita no banco.');
+    erro.status = resposta.status;
+    throw erro;
   }
 
   return payload.data;
@@ -861,6 +866,10 @@ async function publicarReceita(event) {
     location.hash = '#chef';
     return;
   } catch (erro) {
+    if ([400, 401, 403, 409].includes(erro.status)) {
+      toast(erro.message || 'A publicação foi bloqueada pelo servidor.');
+      return;
+    }
     const novoId = Math.max(0, ...receitas.map(r => Number(r.id_receita)||0)) + 1;
     const nova = {
       id_receita: novoId,
@@ -877,6 +886,35 @@ async function publicarReceita(event) {
   }
 }
 
+async function reenviarVerificacao(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const dados = new FormData(form);
+  const mensagem = form.querySelector('[role="status"]');
+  const cnpj = String(dados.get('cnpj') || '').replace(/\D/g, '');
+
+  try {
+    const resposta = await fetch('api.php?action=reenviar_verificacao', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        empresa: String(dados.get('empresa') || '').trim(),
+        cnpj,
+        relato_profissional: String(dados.get('relato_profissional') || '').trim(),
+        link_evidencia: String(dados.get('link_evidencia') || '').trim(),
+      }),
+    });
+    const payload = await resposta.json();
+    if (!resposta.ok || !payload.success) throw new Error(payload.message || 'Não foi possível reenviar a solicitação.');
+    await atualizarPerfilDoBanco();
+    perfilAtual = carregarPerfil();
+    rota();
+    toast(payload.message);
+  } catch (erro) {
+    if (mensagem) mensagem.textContent = erro.message || 'Não foi possível reenviar a solicitação.';
+  }
+}
+
 /* ---------- receita ---------- */
 
 function telaReceita(id) {
@@ -884,7 +922,93 @@ function telaReceita(id) {
   const bandeira = r.pais ? `<img class="bandeira" src="https://flagcdn.com/w80/${esc(r.pais)}.png" alt="" loading="lazy">` : '';
   const kit = r.preco_kit > 0 ? `<aside class="kit"><div><span class="eyebrow">kit em destaque</span><b>Prepare em casa</b></div><span class="preco">${brl(r.preco_kit)}</span><button onclick="comprarKit(${r.id_receita})">Adicionar kit</button><small>Estoque disponível: ${r.estoque_disponivel}</small></aside>` : '';
   const video = r.url_video ? `<div class="bloco-receita video-box"><h3>Videoaula</h3><a href="${esc(r.url_video)}" target="_blank" rel="noopener">▶ Abrir videoaula</a>${r.duracao_segundos ? `<span> • ${Math.floor(r.duracao_segundos/60)}m ${r.duracao_segundos%60}s</span>` : ''}</div>` : '';
-  return `<article class="receita"><div class="linha-receita"><a class="chef" href="#chef">← Voltar ao painel</a><a class="voltar" href="#feed" aria-label="Voltar">✕</a></div><div class="corpo-receita">${foto(r,'foto-receita')}<div class="receita-texto"><div class="receita-kicker">${esc(acessoLabel(r.tipo_acesso))} • Receita GastroMatch</div><h1 class="titulo">${esc(r.titulo)}${bandeira}</h1><p class="receita-intro">${esc(r.descricao_introducao || '')}</p><div class="info-receita"><span>${estrelas(r.nota)} <strong>${Number(r.nota || 0).toFixed(1)}</strong> (${esc(r.avaliacoes || '0')} avaliações)</span><span>•</span><span>${niveis[r.nivel_dificuldade]}</span><span>•</span><span>${r.tempo_preparo_minutos} min</span><span>•</span><span>${r.rendimento || '-'} porções</span></div><div class="restricoes-detalhe"><strong>Restrições:</strong>${tagsRestricoes(r)}</div><div class="bloco-receita"><h3>Ingredientes</h3><ul>${r.ingredientes.map(i=>`<li>${esc(i)}</li>`).join('')}</ul></div><div class="bloco-receita"><h3>Modo de preparo</h3><ol>${r.preparo.map(p=>`<li>${esc(p)}</li>`).join('')}</ol></div>${video}</div></div>${kit}</article>`;
+  return `<article class="receita"><div class="linha-receita"><a class="chef" href="#chef">← Voltar ao painel</a><a class="voltar" href="#feed" aria-label="Voltar">✕</a></div><div class="corpo-receita">${foto(r,'foto-receita')}<div class="receita-texto"><div class="receita-kicker">${esc(acessoLabel(r.tipo_acesso))} • Receita GastroMatch</div><h1 class="titulo">${esc(r.titulo)}${bandeira}</h1><p class="receita-intro">${esc(r.descricao_introducao || '')}</p><div class="info-receita"><span class="avaliacao-resumo">${estrelas(r.nota)} <strong>${Number(r.nota || 0).toFixed(1)}</strong> (${esc(r.avaliacoes || '0')} avaliações)</span><span>•</span><span>${niveis[r.nivel_dificuldade]}</span><span>•</span><span>${r.tempo_preparo_minutos} min</span><span>•</span><span>${r.rendimento || '-'} porções</span></div><div class="restricoes-detalhe"><strong>Restrições:</strong>${tagsRestricoes(r)}</div><div class="bloco-receita"><h3>Ingredientes</h3><ul>${r.ingredientes.map(i=>`<li>${esc(i)}</li>`).join('')}</ul></div><div class="bloco-receita"><h3>Modo de preparo</h3><ol>${r.preparo.map(p=>`<li>${esc(p)}</li>`).join('')}</ol></div>${video}</div></div><section class="avaliacoes" id="avaliacoesReceita" aria-live="polite"><p class="avaliacoes-carregando">Carregando avaliações...</p></section>${kit}</article>`;
+}
+
+function renderizarAvaliacoes(data, idReceita) {
+  const reviews = Array.isArray(data.reviews) ? data.reviews : [];
+  const minha = data.current_user_review || null;
+  const form = data.authenticated
+    ? `<form class="avaliacao-form" data-receita-id="${idReceita}" onsubmit="enviarAvaliacao(event)">
+        <h3>${minha ? 'Edite sua avaliação' : 'Deixe sua avaliação'}</h3>
+        <fieldset class="campo-nota">
+          <legend>Sua nota</legend>
+          <div class="avaliacao-estrelas">${[1, 2, 3, 4, 5].map(valor => `<label class="estrela-opcao${minha && valor <= Number(minha.nota) ? ' ativa' : ''}" data-valor="${valor}">
+            <input type="radio" name="nota" value="${valor}" aria-label="${valor} ${valor === 1 ? 'estrela' : 'estrelas'}" onchange="atualizarEstrelasAvaliacao(this)"${minha && Number(minha.nota) === valor ? ' checked' : ''} required>
+            <span aria-hidden="true">★</span>
+          </label>`).join('')}</div>
+        </fieldset>
+        <label class="campo-comentario"><span>Comentário (opcional)</span><textarea name="comentario" maxlength="1000" rows="4" placeholder="Compartilhe o que achou desta receita">${esc(minha?.comentario || '')}</textarea></label>
+        <div class="avaliacao-acoes"><button class="btn" type="submit">${minha ? 'Salvar alterações' : 'Publicar avaliação'}</button><p class="avaliacao-mensagem" role="status" aria-live="polite"></p></div>
+      </form>`
+    : `<div class="avaliacao-login"><p>Entre ou crie uma conta para avaliar esta receita.</p><a class="btn" href="login.html">Entrar ou criar conta</a></div>`;
+  const lista = reviews.length
+    ? `<ol class="avaliacao-lista">${reviews.map(review => {
+        const data = String(review.data_avaliacao || '').slice(0, 10).split('-').reverse().join('/');
+        return `<li class="avaliacao-item"><div class="avaliacao-item-topo"><strong>${esc(review.nome || 'Usuário')}</strong>${estrelas(review.nota)}<time>${esc(data)}</time></div>${review.comentario ? `<p>${esc(review.comentario)}</p>` : '<p class="avaliacao-sem-comentario">Sem comentário.</p>'}</li>`;
+      }).join('')}</ol>`
+    : '<p class="avaliacoes-vazias">Ainda não há avaliações escritas para esta receita.</p>';
+
+  return `<div class="avaliacoes-cabecalho"><div><span class="eyebrow">opiniões da comunidade</span><h2>Avaliações</h2></div><span class="avaliacoes-contagem">${Number(data.comentarios || 0)} comentários</span></div>${form}<div class="avaliacoes-publicadas"><h3>Comentários recentes</h3>${lista}</div>`;
+}
+
+async function carregarAvaliacoesReceita(idReceita) {
+  const container = document.getElementById('avaliacoesReceita');
+  if (!container) return;
+  try {
+    const resposta = await fetch(`api.php?action=avaliacoes&id_receita=${encodeURIComponent(idReceita)}`, { cache: 'no-store', credentials: 'same-origin' });
+    const payload = await resposta.json();
+    if (!resposta.ok || !payload.success) throw new Error(payload.message || 'Não foi possível carregar as avaliações.');
+
+    const receita = achar(idReceita);
+    if (receita) {
+      receita.nota = Number(payload.data.nota || 0);
+      receita.avaliacoes = String(payload.data.avaliacoes || 0);
+    }
+    const resumo = document.querySelector('.avaliacao-resumo');
+    if (resumo) resumo.innerHTML = `${estrelas(payload.data.nota)} <strong>${Number(payload.data.nota || 0).toFixed(1)}</strong> (${Number(payload.data.avaliacoes || 0)} avaliações)`;
+    container.innerHTML = renderizarAvaliacoes(payload.data, idReceita);
+  } catch (erro) {
+    container.innerHTML = '<p class="avaliacoes-erro" role="status">Não foi possível carregar as avaliações agora. Atualize a página para tentar novamente.</p>';
+  }
+}
+
+function atualizarEstrelasAvaliacao(input) {
+  const valor = Number(input.value);
+  input.closest('.avaliacao-estrelas').querySelectorAll('.estrela-opcao').forEach(opcao => {
+    opcao.classList.toggle('ativa', Number(opcao.dataset.valor) <= valor);
+  });
+}
+
+async function enviarAvaliacao(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const botao = form.querySelector('button[type="submit"]');
+  const mensagem = form.querySelector('.avaliacao-mensagem');
+  botao.disabled = true;
+  mensagem.textContent = 'Enviando avaliação...';
+
+  try {
+    const dados = new FormData(form);
+    const resposta = await fetch('api.php?action=avaliar', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id_receita: Number(form.dataset.receitaId),
+        nota: Number(dados.get('nota')),
+        comentario: String(dados.get('comentario') || '').trim(),
+      }),
+    });
+    const payload = await resposta.json();
+    if (!resposta.ok || !payload.success) throw new Error(payload.message || 'Não foi possível salvar sua avaliação.');
+    toast(payload.message);
+    await carregarAvaliacoesReceita(Number(form.dataset.receitaId));
+  } catch (erro) {
+    if (mensagem.isConnected) mensagem.textContent = erro.message || 'Não foi possível salvar sua avaliação.';
+  } finally {
+    if (botao.isConnected) botao.disabled = false;
+  }
 }
 
 /* ---------- navegação de sessão: Entrar / Sair ---------- */
@@ -909,6 +1033,7 @@ function atualizarBotaoSessao() {
 
 function sairDaConta(event) {
   if (event) event.preventDefault();
+  fetch('api.php?action=logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
   sessionStorage.removeItem('gm_area_auth');
   try { localStorage.removeItem('gm_usuario'); } catch (e) {}
   try { localStorage.removeItem('gm_carrinho'); } catch (e) {}
@@ -936,15 +1061,25 @@ function atualizarMetodoPagamento() {
     box.hidden = !show;
     box.querySelectorAll('input, select').forEach(field => {
       field.disabled = !show;
-      field.required = show && field.name.startsWith('cartao_');
+      field.required = show && field.hasAttribute('data-pix-required');
     });
   });
+
+  const cpf = document.querySelector('[name="pix_cpf"]');
+  if (cpf && !cpf.dataset.maskBound) {
+    cpf.dataset.maskBound = 'true';
+    cpf.addEventListener('input', () => {
+      const digits = cpf.value.replace(/\D/g, '').slice(0, 11);
+      cpf.value = digits.replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d{1,2})$/, '$1-$2');
+    });
+  }
 }
 
 function rota() {
   const [pag, id] = (location.hash.slice(1) || 'inicio').split('-');
   document.querySelectorAll('#menu a').forEach(a => a.classList.toggle('ativo', a.dataset.p === pag));
   $('#app').innerHTML = pag === 'receita' ? telaReceita(id) : (telas[pag] || telas.inicio)();
+  if (pag === 'receita') carregarAvaliacoesReceita(id);
   perfilAtual = carregarPerfil(); atualizarAvatarMini(); salvarCesta(); atualizarBotaoSessao();
   if (pag === 'novareceita') { alternarPrecoConteudo(); alternarKit(); }
   if (pag === 'pagamento') {
