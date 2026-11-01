@@ -94,7 +94,12 @@ const receitasBase = [
 const restricoesDisponiveis = [
   { id: 'vegano', label: 'Vegano' },
   { id: 'sem-gluten', label: 'Sem glúten' },
-  { id: 'sem-lactose', label: 'Sem lactose' }
+  { id: 'sem-lactose', label: 'Sem lactose' },
+  { id: 'vegetariano', label: 'Vegetariano' },
+  { id: 'sem-ovos', label: 'Sem ovos' },
+  { id: 'sem-amendoim', label: 'Sem amendoim' },
+  { id: 'sem-frutos-do-mar', label: 'Sem frutos do mar' },
+  { id: 'baixo-sodio', label: 'Baixo sódio' }
 ];
 
 /* ---------- dados locais de demonstração ---------- */
@@ -945,11 +950,12 @@ function renderizarAvaliacoes(data, idReceita) {
   const lista = reviews.length
     ? `<ol class="avaliacao-lista">${reviews.map(review => {
         const data = String(review.data_avaliacao || '').slice(0, 10).split('-').reverse().join('/');
-        return `<li class="avaliacao-item"><div class="avaliacao-item-topo"><strong>${esc(review.nome || 'Usuário')}</strong>${estrelas(review.nota)}<time>${esc(data)}</time></div>${review.comentario ? `<p>${esc(review.comentario)}</p>` : '<p class="avaliacao-sem-comentario">Sem comentário.</p>'}</li>`;
+          const demoBadge = Number(review.demonstracao) === 1 ? '<span class="avaliacao-demo-badge">Demonstração</span>' : '';
+          return `<li class="avaliacao-item"><div class="avaliacao-item-topo"><strong>${esc(review.nome || 'Usuário')}</strong>${demoBadge}${estrelas(review.nota)}<time>${esc(data)}</time></div>${review.comentario ? `<p>${esc(review.comentario)}</p>` : '<p class="avaliacao-sem-comentario">Sem comentário.</p>'}</li>`;
       }).join('')}</ol>`
     : '<p class="avaliacoes-vazias">Ainda não há avaliações escritas para esta receita.</p>';
 
-  return `<div class="avaliacoes-cabecalho"><div><span class="eyebrow">opiniões da comunidade</span><h2>Avaliações</h2></div><span class="avaliacoes-contagem">${Number(data.comentarios || 0)} comentários</span></div>${form}<div class="avaliacoes-publicadas"><h3>Comentários recentes</h3>${lista}</div>`;
+  return `<div class="avaliacoes-cabecalho"><div><span class="eyebrow">opiniões da comunidade</span><h2>Avaliações</h2></div><span class="avaliacoes-contagem">${Number(data.avaliacoes || 0)} avaliações · ${Number(data.avaliacoes_demo || 0)} exemplos</span></div>${form}<div class="avaliacoes-publicadas"><h3>Comentários recentes</h3>${lista}</div>`;
 }
 
 async function carregarAvaliacoesReceita(idReceita) {

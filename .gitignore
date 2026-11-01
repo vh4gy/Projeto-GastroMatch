@@ -1,0 +1,6 @@
+# Local credentials and machine-specific configuration
+.env
+.env.*
+!.env.example
+config.local.php
+*.local.php

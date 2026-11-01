@@ -290,6 +290,7 @@ button{cursor:pointer}
 .avaliacao-item{padding:16px 0;border-top:1px solid var(--linha)}
 .avaliacao-item-topo{gap:10px}
 .avaliacao-item-topo>strong{font:700 .95rem var(--titulo)}
+.avaliacao-demo-badge{padding:4px 7px;border-radius:999px;background:#fff2dc;color:#81510d;font-size:.62rem;font-weight:700}
 .avaliacao-item-topo time{margin-left:auto;color:var(--muted);font-size:.72rem}
 .avaliacao-item>p{margin-top:8px;color:#3f3a35;font-size:.88rem;line-height:1.6;overflow-wrap:anywhere}
 .avaliacao-item>.avaliacao-sem-comentario{color:var(--muted);font-style:italic}

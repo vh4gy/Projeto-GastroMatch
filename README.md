@@ -26,7 +26,7 @@ A proposta principal é aproximar o usuário da experiência profissional da coz
 - verificação em duas etapas opcional
 - painel de perfil com dados vindos do banco
 - criação e listagem de receitas
-- filtros por dificuldade, tempo e restrição alimentar
+- filtros por dificuldade, tempo e restrições (vegano, vegetariano, sem glúten, lactose, ovos, amendoim, frutos do mar e baixo sódio)
 - compra de kits de ingredientes
 - checkout com endereço, observações, itens e status de entrega
 - pagamento Pix demonstrativo com registro no banco, sem gateway financeiro
@@ -42,6 +42,7 @@ A proposta principal é aproximar o usuário da experiência profissional da coz
 - [Banco de dados/migracao_compras.sql](Banco%20de%20dados/migracao_compras.sql) — migração incremental do checkout
 - [Banco de dados/migracao_imagens_png.sql](Banco%20de%20dados/migracao_imagens_png.sql) — atualização das imagens cadastradas para PNG
 - [Banco de dados/migracao_avaliacoes.sql](Banco%20de%20dados/migracao_avaliacoes.sql) — tabela de avaliações por receita e usuário
+- [Banco de dados/migracao_avaliacoes_demo.sql](Banco%20de%20dados/migracao_avaliacoes_demo.sql) — exemplos rotulados e média combinada de avaliações
 - [Banco de dados/migracao_pix_verificacao.sql](Banco%20de%20dados/migracao_pix_verificacao.sql) — dados do Pix simulado e fila de verificação profissional
 - [Codigo/codigo.js](Codigo/codigo.js) — lógica principal do site
 - [Codigo/login.js](Codigo/login.js) — autenticação e cadastro
@@ -65,6 +66,7 @@ O banco contém as tabelas principais:
 - verificacoes_criadores
 - receitas
 - avaliacoes_receitas
+- avaliacoes_demo
 - receitas_restricoes
 - videoaulas
 - kits_ingredientes
@@ -109,6 +111,8 @@ Para atualizar as imagens das receitas em um banco existente, execute também um
 
 Para habilitar as avaliações em um banco existente, execute uma vez [Banco de dados/migracao_avaliacoes.sql](Banco%20de%20dados/migracao_avaliacoes.sql) pelo phpMyAdmin. A tabela armazena nota e comentário por usuário/receita, impede duplicidade e não altera as receitas ou contas existentes.
 
+Para mostrar atividade inicial sem apresentar comentários fictícios como reais, execute também uma vez [Banco de dados/migracao_avaliacoes_demo.sql](Banco%20de%20dados/migracao_avaliacoes_demo.sql). Os exemplos recebem um selo de demonstração e entram na média junto às avaliações reais; as duas origens permanecem em tabelas separadas.
+
 Para atualizar pagamentos e criar a fila humana de chefs, execute uma vez [Banco de dados/migracao_pix_verificacao.sql](Banco%20de%20dados/migracao_pix_verificacao.sql) depois da migração do checkout. Ela preserva pagamentos antigos, cria os campos do Pix demonstrativo e a tabela `verificacoes_criadores`, e inicializa o hash da conta administrativa local. Em cada ambiente, use uma senha privada e não compartilhe credenciais.
 
 O arquivo de migração usa comandos `ALTER TABLE` compatíveis com MySQL/MariaDB sem `ADD COLUMN IF NOT EXISTS`, que não está disponível em todas as versões. Execute-o uma única vez em cada cópia existente do banco. Para duas pessoas trabalhando em máquinas diferentes, cada uma aplica a mesma migração ao seu banco local; isso sincroniza o esquema, mas não sincroniza os dados. Compartilhar dados entre máquinas exige configurar um único servidor MySQL acessível a ambas.
@@ -128,6 +132,10 @@ Abra as páginas pelo Apache; não abra os arquivos HTML diretamente pelo explor
 
 Para configurar outra instalação do MySQL, defina `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER` e `DB_PASS` no ambiente do Apache/PHP. Em cada computador, o Apache e o MySQL locais devem estar iniciados e o banco `gastromatch` precisa ser importado nesse MySQL. Os dados locais não são sincronizados automaticamente entre computadores; para compartilhar os mesmos dados, configure um servidor MySQL central e restrinja o acesso à rede necessária. As portas 80 e 443 são do Apache, não devem ser usadas como porta do MySQL.
 
+### E-mail de verificação com Twilio
+
+O cadastro pode enviar o código de verificação pela API de e-mail do Twilio. Configure `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_EMAIL_FROM` e, opcionalmente, `TWILIO_EMAIL_FROM_NAME` no ambiente do processo Apache e reinicie o Apache. Use um remetente habilitado na sua conta Twilio. Sem essas variáveis, o projeto mantém o modo de demonstração e exibe o código localmente. O arquivo [.env.example](.env.example) apenas lista os nomes das variáveis; o PHP lê `getenv` e não carrega arquivos `.env`. Configure os valores localmente em cada computador, fora do Git. O arquivo [.gitignore](.gitignore) impede que `.env` e configurações locais sejam adicionados acidentalmente. Nunca coloque SID, Auth Token ou outros segredos no JavaScript, HTML, Git ou em mensagens públicas. Se um token for exposto, revogue/rotacione-o no Console Twilio antes de configurar o novo.
+
 ## Usuários iniciais do banco
 
 Os dados do banco podem ser acessados após a importação do script SQL. O sistema usa autenticação real, então a criação e login são feitos como usuários cadastrados na tabela `usuarios`.
@@ -139,7 +147,7 @@ Na tela de login, selecione o perfil correspondente e use um dos códigos abaixo
 - Cliente: `GM-CLI-2026`
 - Chef / Criador: `GM-CHEF-2026`
 
-O administrador deve entrar com `admin@gastromatch.com.br` e uma senha privada configurada no banco local. Não use códigos públicos para acesso administrativo.
+O administrador deve selecionar o perfil Administrador e entrar com `admin@gastromatch.com.br` e a senha privada configurada no banco local. Não use códigos públicos para acesso administrativo.
 
 ### Verificação de criadores
 

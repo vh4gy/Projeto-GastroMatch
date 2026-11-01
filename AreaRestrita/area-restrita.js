@@ -12,7 +12,12 @@ const ROLES = {
 const restricciones = [
   { id: 'vegano', nome: 'Vegano' },
   { id: 'sem-gluten', nome: 'Sem glúten' },
-  { id: 'sem-lactose', nome: 'Sem lactose' }
+  { id: 'sem-lactose', nome: 'Sem lactose' },
+  { id: 'vegetariano', nome: 'Vegetariano' },
+  { id: 'sem-ovos', nome: 'Sem ovos' },
+  { id: 'sem-amendoim', nome: 'Sem amendoim' },
+  { id: 'sem-frutos-do-mar', nome: 'Sem frutos do mar' },
+  { id: 'baixo-sodio', nome: 'Baixo sódio' }
 ];
 
 const tabelas = [

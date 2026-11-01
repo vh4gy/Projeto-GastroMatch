@@ -126,6 +126,64 @@ function evidenceUrlIsValid(string $url): bool
         && !empty($parts['host']);
 }
 
+function twilioEmailConfiguration(): ?array
+{
+    $configuration = [
+        'account_sid' => trim((string)(getenv('TWILIO_ACCOUNT_SID') ?: '')),
+        'auth_token' => trim((string)(getenv('TWILIO_AUTH_TOKEN') ?: '')),
+        'from_address' => trim((string)(getenv('TWILIO_EMAIL_FROM') ?: '')),
+        'from_name' => trim((string)(getenv('TWILIO_EMAIL_FROM_NAME') ?: 'GastroMatch')),
+    ];
+
+    $hasTwilioSettings = $configuration['account_sid'] !== ''
+        || $configuration['auth_token'] !== ''
+        || $configuration['from_address'] !== '';
+
+    return $hasTwilioSettings ? $configuration : null;
+}
+
+function sendTwilioVerificationEmail(array $configuration, string $recipient, string $name, string $code): bool
+{
+    if (!function_exists('curl_init')) {
+        return false;
+    }
+
+    $safeName = htmlspecialchars($name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $payload = json_encode([
+        'from' => [
+            'address' => $configuration['from_address'],
+            'name' => $configuration['from_name'],
+        ],
+        'to' => [['address' => $recipient]],
+        'content' => [
+            'subject' => 'Código de verificação do GastroMatch',
+            'html' => '<p>Olá, ' . $safeName . '.</p><p>Seu código de verificação é:</p><p style="font-size:24px;font-weight:bold;letter-spacing:4px">' . $code . '</p><p>Se você não solicitou este cadastro, ignore esta mensagem.</p>',
+        ],
+    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+    if ($payload === false) {
+        return false;
+    }
+
+    $handle = curl_init('https://comms.twilio.com/v1/Emails');
+    curl_setopt_array($handle, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPAUTH => CURLAUTH_BASIC,
+        CURLOPT_USERPWD => $configuration['account_sid'] . ':' . $configuration['auth_token'],
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Accept: application/json'],
+        CURLOPT_POSTFIELDS => $payload,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_TIMEOUT => 15,
+    ]);
+
+    $response = curl_exec($handle);
+    $status = (int)curl_getinfo($handle, CURLINFO_HTTP_CODE);
+    curl_close($handle);
+
+    return $response !== false && $status >= 200 && $status < 300;
+}
+
 function externalEmailCheck(string $email): array
 {
     $apiUrl = getenv('EMAIL_VERIFY_API_URL') ?: '';
@@ -236,6 +294,18 @@ if ($action === 'register') {
     $hash = password_hash($senha, PASSWORD_DEFAULT);
     $emailVerificado = $verificacao2fa === 0 ? 1 : 0;
     $codigoVerificacao = $verificacao2fa === 1 ? str_pad((string)random_int(100000, 999999), 6, '0', STR_PAD_LEFT) : null;
+    $twilio = $codigoVerificacao !== null ? twilioEmailConfiguration() : null;
+    $verificationEmailSent = false;
+
+    if ($twilio !== null) {
+        if ($twilio['account_sid'] === '' || $twilio['auth_token'] === '' || $twilio['from_address'] === '') {
+            jsonReply(false, 'A configuração de e-mail está incompleta. Confira as variáveis TWILIO_* do Apache.', null, 503);
+        }
+        if (!sendTwilioVerificationEmail($twilio, $email, $nome, $codigoVerificacao)) {
+            jsonReply(false, 'Não foi possível enviar o código de verificação. Confira o remetente e a conta Twilio.', null, 502);
+        }
+        $verificationEmailSent = true;
+    }
 
     $insert = $pdo->prepare('INSERT INTO usuarios (nome, email, senha_hash, codigo_acesso, tipo_usuario, telefone, foto_perfil, data_cadastro, email_verificado, email_verificacao_codigo, verificacao_2fa, cnpj, cnpj_validado, ativo)
         VALUES (:nome, :email, :senha_hash, :codigo_acesso, :tipo_usuario, :telefone, :foto_perfil, NOW(), :email_verificado, :email_verificacao_codigo, :verificacao_2fa, :cnpj, :cnpj_validado, :ativo)');
@@ -293,8 +363,11 @@ if ($action === 'register') {
     ]];
 
     if ($verificacao2fa === 1) {
-        $responseData['verification_code'] = $codigoVerificacao;
         $responseData['verification_required'] = true;
+        $responseData['verification_sent'] = $verificationEmailSent;
+        if (!$verificationEmailSent) {
+            $responseData['verification_code'] = $codigoVerificacao;
+        }
     }
 
     jsonReply(true, 'Conta criada com sucesso.', $responseData);
@@ -379,15 +452,31 @@ if ($action === 'avaliacoes') {
         jsonReply(false, 'Receita não encontrada.', null, 404);
     }
 
-    $reviewsStmt = $pdo->prepare('SELECT a.nota, a.comentario, a.data_avaliacao, u.nome
-        FROM avaliacoes_receitas a
-        INNER JOIN usuarios u ON u.id_usuario = a.id_usuario
-        WHERE a.id_receita = :id
-        ORDER BY a.data_avaliacao DESC, a.id_avaliacao DESC
+    $reviewsStmt = $pdo->prepare('SELECT nota, comentario, data_avaliacao, nome, demonstracao
+        FROM (
+            SELECT a.id_avaliacao AS review_id, a.nota, a.comentario, a.data_avaliacao, u.nome, 0 AS demonstracao
+            FROM avaliacoes_receitas a
+            INNER JOIN usuarios u ON u.id_usuario = a.id_usuario
+            WHERE a.id_receita = :real_reviews_id
+            UNION ALL
+            SELECT d.id_avaliacao_demo AS review_id, d.nota, d.comentario, d.data_avaliacao, d.nome_demo AS nome, 1 AS demonstracao
+            FROM avaliacoes_demo d
+            WHERE d.id_receita = :demo_reviews_id
+        ) todas
+        ORDER BY data_avaliacao DESC, review_id DESC
         LIMIT 50');
-    $reviewsStmt->execute([':id' => $idReceita]);
-    $countStmt = $pdo->prepare('SELECT COUNT(*) FROM avaliacoes_receitas WHERE id_receita = :id');
-    $countStmt->execute([':id' => $idReceita]);
+    $reviewsStmt->execute([':real_reviews_id' => $idReceita, ':demo_reviews_id' => $idReceita]);
+    $summaryStmt = $pdo->prepare('SELECT ROUND(AVG(todas.nota), 1) AS media,
+            COUNT(*) AS quantidade,
+            SUM(CASE WHEN todas.comentario <> "" THEN 1 ELSE 0 END) AS comentarios,
+            SUM(todas.demonstracao) AS quantidade_demo
+        FROM (
+            SELECT nota, comentario, 0 AS demonstracao FROM avaliacoes_receitas WHERE id_receita = :real_summary_id
+            UNION ALL
+            SELECT nota, comentario, 1 AS demonstracao FROM avaliacoes_demo WHERE id_receita = :demo_summary_id
+        ) todas');
+    $summaryStmt->execute([':real_summary_id' => $idReceita, ':demo_summary_id' => $idReceita]);
+    $summary = $summaryStmt->fetch();
 
     $idUsuario = (int)($_SESSION['user_id'] ?? 0);
     $usuarioAtivo = false;
@@ -406,9 +495,10 @@ if ($action === 'avaliacoes') {
     }
 
     jsonReply(true, 'Avaliações carregadas.', [
-        'nota' => (float)$receita['nota'],
-        'avaliacoes' => (int)$receita['avaliacoes'],
-        'comentarios' => (int)$countStmt->fetchColumn(),
+        'nota' => (float)($summary['media'] ?? $receita['nota']),
+        'avaliacoes' => (int)$summary['quantidade'],
+        'comentarios' => (int)$summary['comentarios'],
+        'avaliacoes_demo' => (int)$summary['quantidade_demo'],
         'reviews' => $reviewsStmt->fetchAll(),
         'current_user_review' => $minhaAvaliacao,
         'authenticated' => $usuarioAtivo,
@@ -471,8 +561,13 @@ if ($action === 'avaliar') {
             ':comentario' => $comentario,
         ]);
 
-        $mediaStmt = $pdo->prepare('SELECT AVG(nota) AS media, COUNT(*) AS quantidade FROM avaliacoes_receitas WHERE id_receita = :id');
-        $mediaStmt->execute([':id' => $idReceita]);
+        $mediaStmt = $pdo->prepare('SELECT ROUND(AVG(todas.nota), 1) AS media, COUNT(*) AS quantidade
+            FROM (
+                SELECT nota FROM avaliacoes_receitas WHERE id_receita = :real_id
+                UNION ALL
+                SELECT nota FROM avaliacoes_demo WHERE id_receita = :demo_id
+            ) todas');
+        $mediaStmt->execute([':real_id' => $idReceita, ':demo_id' => $idReceita]);
         $avaliacaoAtual = $mediaStmt->fetch();
         $mediaNova = round((float)$avaliacaoAtual['media'], 1);
         $quantidadeNova = (int)$avaliacaoAtual['quantidade'];
@@ -747,12 +842,15 @@ if ($action === 'cadastro_receita') {
         $idReceita = (int)$pdo->lastInsertId();
 
         $restricoes = is_array($input['restricoes'] ?? null) ? $input['restricoes'] : [];
+        $restricoesAceitas = ['vegano', 'sem-gluten', 'sem-lactose', 'vegetariano', 'sem-ovos', 'sem-amendoim', 'sem-frutos-do-mar', 'baixo-sodio'];
         foreach ($restricoes as $restricao) {
             $r = trim((string)$restricao);
-            if ($r !== '') {
-                $pdo->prepare('INSERT INTO receitas_restricoes (id_receita, restricao) VALUES (:id, :restricao)')
-                    ->execute([':id' => $idReceita, ':restricao' => $r]);
+            if ($r === '') continue;
+            if (!in_array($r, $restricoesAceitas, true)) {
+                throw new RuntimeException('Uma das restrições alimentares é inválida.');
             }
+            $pdo->prepare('INSERT INTO receitas_restricoes (id_receita, restricao) VALUES (:id, :restricao)')
+                ->execute([':id' => $idReceita, ':restricao' => $r]);
         }
 
         $urlVideo = trim((string)($input['url_video'] ?? ''));

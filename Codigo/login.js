@@ -55,7 +55,9 @@ function selecionarPerfil(role){
     card.setAttribute('aria-pressed', String(selecionado));
   });
   $('#selectedRole').hidden = false;
-  $('#selectedRole').textContent = `Perfil selecionado: ${dados.label}`;
+  $('#selectedRole').textContent = role === 'admin'
+    ? 'Administrador: entre com e-mail e senha privados. Código público desativado.'
+    : `Perfil selecionado: ${dados.label}`;
   $('#entrarBtn').disabled = false;
   $('#entrarBtn').textContent = `Entrar como ${dados.label}`;
   $('#loginMsg').textContent = '';
@@ -227,8 +229,13 @@ async function criarConta(e){
   try {
     const usuario = await criarContaNoBanco({ nome, email, password: senha, tipo_usuario: tipo, cnpj, empresa, relato_profissional: relatoProfissional, link_evidencia: linkEvidencia, verificacao_2fa: verificacao2fa });
     if (usuario.verificacao_2fa === 1 && usuario.email_verificado === 0) {
-      localStorage.setItem('gm_verificacao_email', JSON.stringify({ email, codigo: usuario.email_verificacao_codigo || '' }));
-      msg.textContent = `Conta criada com sucesso. Código de verificação: ${usuario.email_verificacao_codigo || 'N/A'} — informe-o ao entrar.`;
+      if (usuario.verification_sent) {
+        localStorage.removeItem('gm_verificacao_email');
+        msg.textContent = 'Conta criada. Enviamos o código de verificação para seu e-mail; informe-o ao entrar.';
+      } else {
+        localStorage.setItem('gm_verificacao_email', JSON.stringify({ email, codigo: usuario.verification_code || '' }));
+        msg.textContent = `Conta criada em modo de demonstração. Código de verificação: ${usuario.verification_code || 'N/A'} — informe-o ao entrar.`;
+      }
       msg.className = 'login-msg ok';
       setTimeout(() => setAuthMode('login'), 1500);
       return;
