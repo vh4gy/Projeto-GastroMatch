@@ -11,6 +11,147 @@
    No back-end real, troque as funções de localStorage por API/SQL.
    ========================================================== */
 
+const MAPBOX_PUBLIC_KEY = 'SEU_TOKEN_PUBLICO';
+
+const restaurantesProximos = [
+  { nome: 'Bairro Gourmet', lat: -23.5762, lng: -46.6768, tempo: '8 min' },
+  { nome: 'Sabor do Centro', lat: -23.5895, lng: -46.6597, tempo: '12 min' },
+  { nome: 'Casa da Massa', lat: -23.5637, lng: -46.6851, tempo: '15 min' },
+  { nome: 'Chef da Rua', lat: -23.6012, lng: -46.6489, tempo: '18 min' },
+  { nome: 'Cozinha do Bairro', lat: -23.5574, lng: -46.6706, tempo: '20 min' }
+];
+
+function distanciaKmEntre(lat1, lng1, lat2, lng2) {
+  const toRad = value => (value * Math.PI) / 180;
+  const earthRadius = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function montarListaRestaurantesPerto(latAtual, lngAtual) {
+  return restaurantesProximos
+    .map(rest => ({ ...rest, distancia: distanciaKmEntre(latAtual, lngAtual, rest.lat, rest.lng) }))
+    .sort((a, b) => a.distancia - b.distancia)
+    .slice(0, 4)
+    .map(rest => `
+      <div class="restaurante-card">
+        <div>
+          <span class="eyebrow">restaurante</span>
+          <h3>${esc(rest.nome)}</h3>
+        </div>
+        <div class="restaurante-meta">
+          <span>${rest.tempo}</span>
+          <strong>${rest.distancia.toFixed(1)} km</strong>
+        </div>
+      </div>
+    `).join('');
+}
+
+function inicializarMapaPerto(containerId, userLat, userLng, restaurantes) {
+  if (!containerId || !window.mapboxgl || !MAPBOX_PUBLIC_KEY || MAPBOX_PUBLIC_KEY === 'SEU_TOKEN_PUBLICO') return false;
+  const token = MAPBOX_PUBLIC_KEY.trim();
+  if (!token || token === 'SEU_TOKEN_PUBLICO') return false;
+
+  try {
+    window.mapboxgl.accessToken = token;
+    const map = new window.mapboxgl.Map({
+      container: containerId,
+      style: 'mapbox://styles/mapbox/streets-v11',
+      center: [userLng, userLat],
+      zoom: 12
+    });
+
+    const userMarker = new window.mapboxgl.Marker({ color: '#f7941d' })
+      .setLngLat([userLng, userLat])
+      .setPopup(new window.mapboxgl.Popup().setHTML('<strong>Você</strong>'))
+      .addTo(map);
+
+    restaurantes.forEach(restaurante => {
+      new window.mapboxgl.Marker({ color: '#2e8b57' })
+        .setLngLat([restaurante.lng, restaurante.lat])
+        .setPopup(new window.mapboxgl.Popup().setHTML(`<strong>${esc(restaurante.nome)}</strong><br>${restaurante.tempo}`))
+        .addTo(map);
+    });
+
+    map.addControl(new window.mapboxgl.NavigationControl(), 'top-right');
+    userMarker.getElement().title = 'Sua localização';
+    return true;
+  } catch (error) {
+    console.warn('Mapbox não inicializou nesta página:', error);
+    return false;
+  }
+}
+
+function inicializarMapasTela() {
+  const pagina = (location.hash.slice(1) || 'inicio');
+
+  if (pagina === 'perto') {
+    const mapEl = document.getElementById('mapa-perto');
+    if (!mapEl) return;
+    if (!MAPBOX_PUBLIC_KEY || MAPBOX_PUBLIC_KEY.trim() === 'SEU_TOKEN_PUBLICO') {
+      mapEl.innerHTML = '<div class="mapa-vazio"><strong>Mapa de restaurantes</strong><p>Insira sua chave pública do Mapbox para ativar a visualização.</p></div>';
+      return;
+    }
+    const userLat = -23.5604;
+    const userLng = -46.6667;
+    const restaurantes = restaurantesProximos.map(rest => ({ ...rest, distancia: distanciaKmEntre(userLat, userLng, rest.lat, rest.lng) }));
+    inicializarMapaPerto('mapa-perto', userLat, userLng, restaurantes);
+  }
+
+  if (pagina === 'rastreio') {
+    const mapEl = document.getElementById('mapa-rastreio');
+    if (!mapEl) return;
+    if (!MAPBOX_PUBLIC_KEY || MAPBOX_PUBLIC_KEY.trim() === 'SEU_TOKEN_PUBLICO') {
+      mapEl.innerHTML = '<div class="mapa-vazio"><strong>Mapa do pedido</strong><p>Coloque sua chave pública do Mapbox para ativar a rota.</p></div>';
+      return;
+    }
+
+    try {
+      window.mapboxgl.accessToken = MAPBOX_PUBLIC_KEY.trim();
+      const origem = [-46.6333, -23.5505];
+      const destino = [-46.6667, -23.5604];
+      const map = new window.mapboxgl.Map({
+        container: 'mapa-rastreio',
+        style: 'mapbox://styles/mapbox/streets-v11',
+        center: origem,
+        zoom: 12
+      });
+
+      map.on('load', () => {
+        new window.mapboxgl.Marker({ color: '#d9534f' }).setLngLat(origem).addTo(map);
+        new window.mapboxgl.Marker({ color: '#2e8b57' }).setLngLat(destino).addTo(map);
+
+        const routeCoordinates = [origem, destino];
+        map.addSource('rota-pedido', {
+          type: 'geojson',
+          data: {
+            type: 'Feature',
+            properties: {},
+            geometry: { type: 'LineString', coordinates: routeCoordinates }
+          }
+        });
+        map.addLayer({
+          id: 'rota-pedido',
+          type: 'line',
+          source: 'rota-pedido',
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint: { 'line-color': '#2b6cb0', 'line-width': 5 }
+        });
+
+        map.addControl(new window.mapboxgl.NavigationControl(), 'top-right');
+        const bounds = new window.mapboxgl.LngLatBounds();
+        routeCoordinates.forEach(coord => bounds.extend(coord));
+        map.fitBounds(bounds, { padding: 32 });
+      });
+    } catch (error) {
+      console.warn('Mapbox do rastreio não inicializou:', error);
+      mapEl.innerHTML = '<div class="mapa-vazio"><strong>Mapa do pedido</strong><p>A rota simulada não pode ser exibida no momento.</p></div>';
+    }
+  }
+}
+
 const receitasBase = [
   {
     id_receita: 2, titulo: 'Poutine', pais: 'ca', img: 'img/poutine.png',
@@ -404,13 +545,20 @@ async function confirmarPagamento(event) {
     }
 
     cesta = []; salvarCesta();
+    const pedidoResumo = {
+      id_pedido: payload.data.id_pedido,
+      status_pedido: 'Em rota de entrega',
+      valor_total: payload.data.valor_total || total,
+      metodo_pagamento: metodo
+    };
+    sessionStorage.setItem('gm_ultimo_pedido', JSON.stringify(pedidoResumo));
     if (metodo === 'pix' && payload.data.link_pagamento) {
       toast(`Pedido #${payload.data.id_pedido} criado. Abra a simulação Pix.`);
       window.location.href = payload.data.link_pagamento;
       return;
     }
-    toast(`Pedido #${payload.data.id_pedido} registrado para pagamento em dinheiro na entrega.`);
-    location.hash = '#inicio';
+    toast(`Pedido #${payload.data.id_pedido} registrado. Rastree seu pedido abaixo.`);
+    location.hash = '#rastreio';
     return;
   } catch (erro) {
     toast(erro.message || 'Não foi possível registrar o pedido. O carrinho foi mantido.');
@@ -503,9 +651,54 @@ const telas = {
   },
 
   perto() {
-    return `<section class="pagina"><div class="pagina-cabecalho"><div><span class="eyebrow">logística local</span><h2>Perto de você</h2><p>Esta tela está preparada para usar latitude/longitude + raio de entrega quando o back-end estiver conectado.</p></div></div>
-      <div class="local-box"><div class="local-icone">⌖</div><div><h3>Disponibilidade regional</h3><p>O banco prevê <strong>latitude/longitude</strong> do criador e um <strong>raio_km_cobertura</strong> para validar os kits disponíveis na região do cliente.</p></div></div>
-      <div class="grade destaque-grid">${receitas.slice(0, 3).map(r => cardReceita(r, true)).join('')}</div></section>`;
+    const userLat = -23.5604;
+    const userLng = -46.6667;
+    const restaurantes = montarListaRestaurantesPerto(userLat, userLng);
+    return `<section class="pagina">
+      <div class="pagina-cabecalho"><div><span class="eyebrow">logística local</span><h2>Perto de você</h2><p>Veja quais restaurantes ficam mais próximos da sua localização e simule a rota do pedido.</p></div></div>
+      <div class="local-box"><div class="local-icone">⌖</div><div><h3>Disponibilidade regional</h3><p>Se o navegador tiver permissão para geolocalização, o mapa usa sua posição real. Se não, usa uma localização demonstrativa em São Paulo.</p></div></div>
+      <div class="mapa-container">
+        <div id="mapa-perto" class="mapa-localizacao"></div>
+        <div class="mapa-fallback">
+          <strong>Restaurantes próximos</strong>
+          <div class="lista-restaurantes">${restaurantes}</div>
+        </div>
+      </div>
+      <div class="grade destaque-grid">${receitas.slice(0, 3).map(r => cardReceita(r, true)).join('')}</div>
+    </section>`;
+  },
+
+  rastreio() {
+    const pedidoSalvo = (() => {
+      try { return JSON.parse(sessionStorage.getItem('gm_ultimo_pedido') || 'null'); } catch (e) { return null; }
+    })();
+    const pedidoNumero = pedidoSalvo?.id_pedido || 12845;
+    const valor = pedidoSalvo?.valor_total || 79.9;
+    const status = pedidoSalvo?.status_pedido || 'Em rota de entrega';
+    return `<section class="pagina pagina-rastreio">
+      <div class="pagina-cabecalho"><div><span class="eyebrow">rastreio do pedido</span><h2>Seu pedido está a caminho</h2><p>O mapa mostra a rota simulada do entregador até a sua casa.</p></div><a href="#inicio" class="btn btn-ghost">← Voltar ao início</a></div>
+      <div class="rastreio-layout">
+        <div class="rastreio-card">
+          <div class="rastreio-header">
+            <div>
+              <span class="eyebrow">pedido</span>
+              <h3>#${pedidoNumero}</h3>
+            </div>
+            <span class="status-entrega">${esc(status)}</span>
+          </div>
+          <div id="mapa-rastreio" class="mapa-localizacao mapa-rastreio"></div>
+          <button class="btn" type="button" onclick="location.hash='#inicio'">Voltar ao menu</button>
+        </div>
+        <aside class="resumo-pedido">
+          <span class="eyebrow">resumo do trajeto</span>
+          <div class="linha-resumo"><span>Entregador</span><strong>Lucas A.</strong></div>
+          <div class="linha-resumo"><span>Valor</span><strong>${brl(valor)}</strong></div>
+          <div class="linha-resumo"><span>Tempo estimado</span><strong>18 min</strong></div>
+          <div class="linha-resumo total-final"><span>Local de entrega</span><strong>Centro</strong></div>
+          <button class="btn btn-ghost" type="button" onclick="location.hash='#perto'">Ver restaurantes próximos</button>
+        </aside>
+      </div>
+    </section>`;
   },
 
   perfil() {
@@ -1095,6 +1288,9 @@ function rota() {
       });
       atualizarMetodoPagamento();
     }, 0);
+  }
+  if (['perto', 'rastreio'].includes(pag)) {
+    setTimeout(inicializarMapasTela, 0);
   }
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }

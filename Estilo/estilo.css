@@ -220,6 +220,22 @@ button{cursor:pointer}
 .pill,.status-validacao{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border-radius:999px;background:#fff;border:1px solid var(--linha);font:700 .68rem var(--texto-font);text-transform:uppercase;letter-spacing:.06em;margin-bottom:7px}
 .status-validacao{color:var(--verde)}
 .status-validacao small{font-weight:500;color:var(--muted);text-transform:none;letter-spacing:0}
+.mapa-container{display:grid;grid-template-columns:1.5fr .9fr;gap:16px;align-items:stretch;margin-top:18px}
+.mapa-localizacao{width:100%;height:360px;border-radius:22px;border:1px solid var(--linha);background:linear-gradient(135deg,#eef7ff,#f7f4ef);overflow:hidden}
+.mapa-rastreio{height:420px}
+.mapa-fallback{padding:18px;border:1px solid var(--linha);border-radius:22px;background:var(--paper);box-shadow:var(--sombra-leve)}
+.mapa-fallback strong{display:block;margin-bottom:12px;font:700 1.05rem var(--titulo)}
+.lista-restaurantes{display:grid;gap:10px}
+.restaurante-card{padding:12px 14px;border:1px solid var(--linha);border-radius:14px;background:#fff;display:flex;justify-content:space-between;align-items:center;gap:12px}
+.restaurante-card h3{font:700 1rem var(--titulo);margin:6px 0 0}
+.restaurante-meta{display:flex;flex-direction:column;align-items:flex-end;gap:4px;color:var(--muted);font-size:.76rem}
+.restaurante-meta strong{color:var(--verde);font-size:.92rem}
+.mapa-vazio{height:100%;display:grid;place-items:center;text-align:center;padding:20px;color:var(--muted)}
+.rastreio-layout{display:grid;grid-template-columns:1.5fr .8fr;gap:20px;align-items:start}
+.rastreio-card{padding:18px;border:1px solid var(--linha);border-radius:20px;background:var(--paper);box-shadow:var(--sombra-leve)}
+.rastreio-header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px}
+.rastreio-header h3{font:700 1.4rem var(--titulo);margin:4px 0 0}
+.status-entrega{display:inline-flex;align-items:center;padding:7px 12px;border-radius:999px;background:#eaf8ee;color:var(--verde);font:700 .7rem var(--texto-font);text-transform:uppercase;letter-spacing:.06em}
 .perfil-grid{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:20px}
 .form-card,.mini-card{background:var(--paper);border:1px solid var(--linha);border-radius:24px;box-shadow:var(--sombra-leve)}
 .form-card{padding:26px}
