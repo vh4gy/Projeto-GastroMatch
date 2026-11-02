@@ -3,6 +3,8 @@ const pixLoading = document.getElementById('pixCarregando');
 const pixContent = document.getElementById('pixConteudo');
 const pixConfirmButton = document.getElementById('pixConfirmar');
 const pixMessage = document.getElementById('pixMensagem');
+const pixReviewBox = document.getElementById('pixAvaliacao');
+const pixReviewLinks = document.getElementById('pixAvaliacaoLinks');
 
 const pixElements = {
   amount: document.getElementById('pixValor'),
@@ -21,6 +23,19 @@ function formatCurrency(value) {
 function showPixError(message) {
   pixLoading.textContent = message;
   pixLoading.classList.add('erro');
+}
+
+function renderReviewLinks(recipes) {
+  if (!pixReviewBox || !pixReviewLinks || !Array.isArray(recipes) || recipes.length === 0) return;
+  pixReviewLinks.replaceChildren();
+  recipes.forEach(recipe => {
+    const link = document.createElement('a');
+    link.className = 'btn';
+    link.href = `index.html#receita-${Number(recipe.id_receita)}-avaliar`;
+    link.textContent = `Avaliar ${recipe.titulo}`;
+    pixReviewLinks.append(link);
+  });
+  pixReviewBox.hidden = false;
 }
 
 async function loadPixSimulation() {
@@ -47,6 +62,7 @@ async function loadPixSimulation() {
     pixElements.status.textContent = data.status === 'aprovado' ? 'Simulação confirmada' : 'Pendente';
     pixConfirmButton.hidden = data.status === 'aprovado';
     document.getElementById('pixVoltarInicio').hidden = data.status !== 'aprovado';
+    if (data.status === 'aprovado') renderReviewLinks(data.receitas);
     pixLoading.hidden = true;
     pixContent.hidden = false;
   } catch (error) {
@@ -71,6 +87,7 @@ pixConfirmButton.addEventListener('click', async () => {
     pixMessage.textContent = payload.message;
     pixConfirmButton.hidden = true;
     document.getElementById('pixVoltarInicio').hidden = false;
+    renderReviewLinks(payload.data.receitas);
   } catch (error) {
     pixMessage.textContent = error.message || 'Não foi possível confirmar a simulação.';
     pixConfirmButton.disabled = false;

@@ -114,6 +114,69 @@ function currentDatabaseUser(PDO $pdo): ?array
     return $stmt->fetch() ?: null;
 }
 
+function saveReviewPhoto(array $file): string
+{
+    if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        throw new RuntimeException('Escolha uma foto do kit ou do prato pronto.');
+    }
+    if ((int)($file['size'] ?? 0) > 5 * 1024 * 1024) {
+        throw new RuntimeException('A foto deve ter no máximo 5 MB.');
+    }
+
+    $temporaryPath = (string)($file['tmp_name'] ?? '');
+    if ($temporaryPath === '' || !is_uploaded_file($temporaryPath) || !function_exists('finfo_open')) {
+        throw new RuntimeException('Não foi possível validar a foto enviada.');
+    }
+
+    $fileInfo = finfo_open(FILEINFO_MIME_TYPE);
+    $mimeType = $fileInfo ? finfo_file($fileInfo, $temporaryPath) : false;
+    if ($fileInfo) {
+        finfo_close($fileInfo);
+    }
+    $extensions = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
+    $imageInfo = @getimagesize($temporaryPath);
+    if (!isset($extensions[$mimeType]) || !$imageInfo || ($imageInfo['mime'] ?? '') !== $mimeType) {
+        throw new RuntimeException('Envie uma imagem JPG, PNG ou WEBP válida.');
+    }
+
+    $directory = __DIR__ . '/uploads/avaliacoes';
+    if (!is_dir($directory) && !mkdir($directory, 0755, true) && !is_dir($directory)) {
+        throw new RuntimeException('Não foi possível salvar a foto da avaliação.');
+    }
+
+    $filename = bin2hex(random_bytes(16)) . '.' . $extensions[$mimeType];
+    if (!move_uploaded_file($temporaryPath, $directory . '/' . $filename)) {
+        throw new RuntimeException('Não foi possível salvar a foto da avaliação.');
+    }
+
+    return 'uploads/avaliacoes/' . $filename;
+}
+
+function removeReviewPhoto(string $path): void
+{
+    if (strpos($path, 'uploads/avaliacoes/') !== 0 || basename($path) !== substr($path, strlen('uploads/avaliacoes/'))) {
+        return;
+    }
+
+    $fullPath = __DIR__ . '/' . $path;
+    if (is_file($fullPath)) {
+        unlink($fullPath);
+    }
+}
+
+function getOrderReviewRecipes(PDO $pdo, int $idPedido): array
+{
+    $stmt = $pdo->prepare('SELECT DISTINCT i.id_receita, r.titulo
+        FROM itens_pedido i
+        INNER JOIN receitas r ON r.id_receita = i.id_receita
+        WHERE i.id_pedido = :pedido AND i.tipo_item = "kit_ingredientes" AND i.id_receita IS NOT NULL
+        ORDER BY r.titulo');
+    $stmt->execute([':pedido' => $idPedido]);
+    return array_map(static function (array $recipe): array {
+        return ['id_receita' => (int)$recipe['id_receita'], 'titulo' => $recipe['titulo']];
+    }, $stmt->fetchAll());
+}
+
 function evidenceUrlIsValid(string $url): bool
 {
     if ($url === '') {
@@ -124,64 +187,6 @@ function evidenceUrlIsValid(string $url): bool
     return is_array($parts)
         && in_array(strtolower((string)($parts['scheme'] ?? '')), ['http', 'https'], true)
         && !empty($parts['host']);
-}
-
-function twilioEmailConfiguration(): ?array
-{
-    $configuration = [
-        'account_sid' => trim((string)(getenv('TWILIO_ACCOUNT_SID') ?: '')),
-        'auth_token' => trim((string)(getenv('TWILIO_AUTH_TOKEN') ?: '')),
-        'from_address' => trim((string)(getenv('TWILIO_EMAIL_FROM') ?: '')),
-        'from_name' => trim((string)(getenv('TWILIO_EMAIL_FROM_NAME') ?: 'GastroMatch')),
-    ];
-
-    $hasTwilioSettings = $configuration['account_sid'] !== ''
-        || $configuration['auth_token'] !== ''
-        || $configuration['from_address'] !== '';
-
-    return $hasTwilioSettings ? $configuration : null;
-}
-
-function sendTwilioVerificationEmail(array $configuration, string $recipient, string $name, string $code): bool
-{
-    if (!function_exists('curl_init')) {
-        return false;
-    }
-
-    $safeName = htmlspecialchars($name, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-    $payload = json_encode([
-        'from' => [
-            'address' => $configuration['from_address'],
-            'name' => $configuration['from_name'],
-        ],
-        'to' => [['address' => $recipient]],
-        'content' => [
-            'subject' => 'Código de verificação do GastroMatch',
-            'html' => '<p>Olá, ' . $safeName . '.</p><p>Seu código de verificação é:</p><p style="font-size:24px;font-weight:bold;letter-spacing:4px">' . $code . '</p><p>Se você não solicitou este cadastro, ignore esta mensagem.</p>',
-        ],
-    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-
-    if ($payload === false) {
-        return false;
-    }
-
-    $handle = curl_init('https://comms.twilio.com/v1/Emails');
-    curl_setopt_array($handle, [
-        CURLOPT_POST => true,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_HTTPAUTH => CURLAUTH_BASIC,
-        CURLOPT_USERPWD => $configuration['account_sid'] . ':' . $configuration['auth_token'],
-        CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'Accept: application/json'],
-        CURLOPT_POSTFIELDS => $payload,
-        CURLOPT_CONNECTTIMEOUT => 5,
-        CURLOPT_TIMEOUT => 15,
-    ]);
-
-    $response = curl_exec($handle);
-    $status = (int)curl_getinfo($handle, CURLINFO_HTTP_CODE);
-    curl_close($handle);
-
-    return $response !== false && $status >= 200 && $status < 300;
 }
 
 function externalEmailCheck(string $email): array
@@ -294,18 +299,6 @@ if ($action === 'register') {
     $hash = password_hash($senha, PASSWORD_DEFAULT);
     $emailVerificado = $verificacao2fa === 0 ? 1 : 0;
     $codigoVerificacao = $verificacao2fa === 1 ? str_pad((string)random_int(100000, 999999), 6, '0', STR_PAD_LEFT) : null;
-    $twilio = $codigoVerificacao !== null ? twilioEmailConfiguration() : null;
-    $verificationEmailSent = false;
-
-    if ($twilio !== null) {
-        if ($twilio['account_sid'] === '' || $twilio['auth_token'] === '' || $twilio['from_address'] === '') {
-            jsonReply(false, 'A configuração de e-mail está incompleta. Confira as variáveis TWILIO_* do Apache.', null, 503);
-        }
-        if (!sendTwilioVerificationEmail($twilio, $email, $nome, $codigoVerificacao)) {
-            jsonReply(false, 'Não foi possível enviar o código de verificação. Confira o remetente e a conta Twilio.', null, 502);
-        }
-        $verificationEmailSent = true;
-    }
 
     $insert = $pdo->prepare('INSERT INTO usuarios (nome, email, senha_hash, codigo_acesso, tipo_usuario, telefone, foto_perfil, data_cadastro, email_verificado, email_verificacao_codigo, verificacao_2fa, cnpj, cnpj_validado, ativo)
         VALUES (:nome, :email, :senha_hash, :codigo_acesso, :tipo_usuario, :telefone, :foto_perfil, NOW(), :email_verificado, :email_verificacao_codigo, :verificacao_2fa, :cnpj, :cnpj_validado, :ativo)');
@@ -360,14 +353,11 @@ if ($action === 'register') {
         'email_verificado' => $emailVerificado,
         'verificacao_2fa' => $verificacao2fa,
         'cnpj' => in_array($tipo, ['chef', 'restaurante'], true) ? $cnpj : null,
+        'verification_code' => $codigoVerificacao,
     ]];
 
     if ($verificacao2fa === 1) {
         $responseData['verification_required'] = true;
-        $responseData['verification_sent'] = $verificationEmailSent;
-        if (!$verificationEmailSent) {
-            $responseData['verification_code'] = $codigoVerificacao;
-        }
     }
 
     jsonReply(true, 'Conta criada com sucesso.', $responseData);
@@ -391,7 +381,10 @@ if ($action === 'login') {
         if ((int)$usuario['verificacao_2fa'] === 1 && (int)$usuario['email_verificado'] === 0) {
             $codigoBanco = (string)($usuario['email_verificacao_codigo'] ?? '');
             if ($codigoBanco !== '' && $codigoVerificacao === '') {
-                jsonReply(false, 'Verificação em duas etapas pendente. Informe o código enviado ao e-mail.', null, 401);
+                jsonReply(false, 'Verificação em duas etapas pendente. Código de demonstração: ' . $codigoBanco, [
+                    'verification_required' => true,
+                    'verification_code' => $codigoBanco,
+                ], 401);
             }
             if ($codigoBanco !== '' && $codigoVerificacao !== $codigoBanco) {
                 jsonReply(false, 'Código de verificação incorreto.', null, 401);
@@ -454,12 +447,12 @@ if ($action === 'avaliacoes') {
 
     $reviewsStmt = $pdo->prepare('SELECT nota, comentario, data_avaliacao, nome, demonstracao
         FROM (
-            SELECT a.id_avaliacao AS review_id, a.nota, a.comentario, a.data_avaliacao, u.nome, 0 AS demonstracao
+            SELECT a.id_avaliacao AS review_id, a.nota, a.comentario, a.foto_avaliacao, a.data_avaliacao, u.nome, 0 AS demonstracao
             FROM avaliacoes_receitas a
             INNER JOIN usuarios u ON u.id_usuario = a.id_usuario
             WHERE a.id_receita = :real_reviews_id
             UNION ALL
-            SELECT d.id_avaliacao_demo AS review_id, d.nota, d.comentario, d.data_avaliacao, d.nome_demo AS nome, 1 AS demonstracao
+            SELECT d.id_avaliacao_demo AS review_id, d.nota, d.comentario, NULL AS foto_avaliacao, d.data_avaliacao, d.nome_demo AS nome, 1 AS demonstracao
             FROM avaliacoes_demo d
             WHERE d.id_receita = :demo_reviews_id
         ) todas
@@ -480,13 +473,24 @@ if ($action === 'avaliacoes') {
 
     $idUsuario = (int)($_SESSION['user_id'] ?? 0);
     $usuarioAtivo = false;
+    $podeAvaliar = false;
     $minhaAvaliacao = null;
     if ($idUsuario > 0) {
         $usuarioStmt = $pdo->prepare('SELECT id_usuario FROM usuarios WHERE id_usuario = :id AND ativo = 1');
         $usuarioStmt->execute([':id' => $idUsuario]);
         $usuarioAtivo = (bool)$usuarioStmt->fetch();
         if ($usuarioAtivo) {
-            $minhaStmt = $pdo->prepare('SELECT nota, comentario FROM avaliacoes_receitas WHERE id_receita = :receita AND id_usuario = :usuario LIMIT 1');
+            $compraStmt = $pdo->prepare('SELECT 1
+                FROM itens_pedido i
+                INNER JOIN pedidos p ON p.id_pedido = i.id_pedido
+                LEFT JOIN pagamentos pg ON pg.id_pedido = p.id_pedido AND pg.status = "aprovado"
+                WHERE p.id_cliente = :usuario AND i.id_receita = :receita AND i.tipo_item = "kit_ingredientes"
+                    AND (pg.id_pagamento IS NOT NULL OR p.status_entrega = "entregue")
+                LIMIT 1');
+            $compraStmt->execute([':usuario' => $idUsuario, ':receita' => $idReceita]);
+            $podeAvaliar = (bool)$compraStmt->fetchColumn();
+
+            $minhaStmt = $pdo->prepare('SELECT nota, comentario, foto_avaliacao FROM avaliacoes_receitas WHERE id_receita = :receita AND id_usuario = :usuario LIMIT 1');
             $minhaStmt->execute([':receita' => $idReceita, ':usuario' => $idUsuario]);
             $minhaAvaliacao = $minhaStmt->fetch() ?: null;
         } else {
@@ -502,6 +506,7 @@ if ($action === 'avaliacoes') {
         'reviews' => $reviewsStmt->fetchAll(),
         'current_user_review' => $minhaAvaliacao,
         'authenticated' => $usuarioAtivo,
+        'can_review' => $podeAvaliar,
     ]);
 }
 
@@ -515,7 +520,10 @@ if ($action === 'avaliar') {
         jsonReply(false, 'Entre com sua conta cadastrada para avaliar esta receita.', null, 401);
     }
 
-    $input = json_decode(file_get_contents('php://input'), true) ?? [];
+    $contentType = strtolower((string)($_SERVER['CONTENT_TYPE'] ?? ''));
+    $input = strpos($contentType, 'multipart/form-data') === 0
+        ? $_POST
+        : (json_decode(file_get_contents('php://input'), true) ?? []);
     $idReceita = (int)($input['id_receita'] ?? 0);
     $nota = filter_var($input['nota'] ?? null, FILTER_VALIDATE_INT);
     $comentario = trim((string)($input['comentario'] ?? ''));
@@ -528,6 +536,7 @@ if ($action === 'avaliar') {
         jsonReply(false, 'O comentário deve ter no máximo 1000 caracteres.', null, 400);
     }
 
+    $novaFoto = '';
     try {
         $pdo->beginTransaction();
 
@@ -547,18 +556,43 @@ if ($action === 'avaliar') {
             jsonReply(false, 'Receita não encontrada.', null, 404);
         }
 
-        $anteriorStmt = $pdo->prepare('SELECT nota FROM avaliacoes_receitas WHERE id_receita = :receita AND id_usuario = :usuario FOR UPDATE');
+        $compraStmt = $pdo->prepare('SELECT 1
+            FROM itens_pedido i
+            INNER JOIN pedidos p ON p.id_pedido = i.id_pedido
+            LEFT JOIN pagamentos pg ON pg.id_pedido = p.id_pedido AND pg.status = "aprovado"
+            WHERE p.id_cliente = :usuario AND i.id_receita = :receita AND i.tipo_item = "kit_ingredientes"
+                AND (pg.id_pagamento IS NOT NULL OR p.status_entrega = "entregue")
+            LIMIT 1');
+        $compraStmt->execute([':usuario' => $idUsuario, ':receita' => $idReceita]);
+        if (!$compraStmt->fetchColumn()) {
+            $pdo->rollBack();
+            jsonReply(false, 'A avaliação fica disponível após a confirmação do pagamento ou a entrega do kit.', null, 403);
+        }
+
+        $anteriorStmt = $pdo->prepare('SELECT nota, foto_avaliacao FROM avaliacoes_receitas WHERE id_receita = :receita AND id_usuario = :usuario FOR UPDATE');
         $anteriorStmt->execute([':receita' => $idReceita, ':usuario' => $idUsuario]);
         $anterior = $anteriorStmt->fetch();
 
-        $saveStmt = $pdo->prepare('INSERT INTO avaliacoes_receitas (id_receita, id_usuario, nota, comentario)
-            VALUES (:receita, :usuario, :nota, :comentario)
-            ON DUPLICATE KEY UPDATE nota = VALUES(nota), comentario = VALUES(comentario), data_avaliacao = CURRENT_TIMESTAMP');
+        $fotoEnviada = $_FILES['foto_avaliacao'] ?? null;
+        if (!$anterior && (!$fotoEnviada || ($fotoEnviada['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE)) {
+            $pdo->rollBack();
+            jsonReply(false, 'Envie uma foto do kit recebido ou do prato preparado para avaliar.', null, 400);
+        }
+        $fotoAvaliacao = $anterior['foto_avaliacao'] ?? null;
+        if ($fotoEnviada && ($fotoEnviada['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
+            $novaFoto = saveReviewPhoto($fotoEnviada);
+            $fotoAvaliacao = $novaFoto;
+        }
+
+        $saveStmt = $pdo->prepare('INSERT INTO avaliacoes_receitas (id_receita, id_usuario, nota, comentario, foto_avaliacao)
+            VALUES (:receita, :usuario, :nota, :comentario, :foto)
+            ON DUPLICATE KEY UPDATE nota = VALUES(nota), comentario = VALUES(comentario), foto_avaliacao = VALUES(foto_avaliacao), data_avaliacao = CURRENT_TIMESTAMP');
         $saveStmt->execute([
             ':receita' => $idReceita,
             ':usuario' => $idUsuario,
             ':nota' => $nota,
             ':comentario' => $comentario,
+            ':foto' => $fotoAvaliacao,
         ]);
 
         $mediaStmt = $pdo->prepare('SELECT ROUND(AVG(todas.nota), 1) AS media, COUNT(*) AS quantidade
@@ -576,6 +610,10 @@ if ($action === 'avaliar') {
         $updateStmt->execute([':nota' => $mediaNova, ':avaliacoes' => $quantidadeNova, ':id' => $idReceita]);
         $pdo->commit();
 
+        if ($novaFoto !== '' && !empty($anterior['foto_avaliacao'])) {
+            removeReviewPhoto((string)$anterior['foto_avaliacao']);
+        }
+
         jsonReply(true, $anterior ? 'Sua avaliação foi atualizada.' : 'Sua avaliação foi registrada.', [
             'nota' => $mediaNova,
             'avaliacoes' => $quantidadeNova,
@@ -583,6 +621,12 @@ if ($action === 'avaliar') {
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
+        }
+        if ($novaFoto !== '') {
+            removeReviewPhoto($novaFoto);
+        }
+        if ($e instanceof RuntimeException) {
+            jsonReply(false, $e->getMessage(), null, 400);
         }
         jsonReply(false, 'Não foi possível registrar a avaliação. Tente novamente.', null, 500);
     }
@@ -1127,6 +1171,7 @@ if ($action === 'pix_detalhe') {
     if (!$pagamento) {
         jsonReply(false, 'Link de pagamento de demonstração inválido ou expirado.', null, 404);
     }
+    $receitasAvaliacao = getOrderReviewRecipes($pdo, (int)$pagamento['id_pedido']);
 
     jsonReply(true, 'Dados da simulação Pix.', [
         'referencia' => $pagamento['referencia_transacao'],
@@ -1137,6 +1182,7 @@ if ($action === 'pix_detalhe') {
         'titular_pagador' => $pagamento['titular_pagador'],
         'cpf_final4' => $pagamento['cpf_final4'],
         'chave_demo' => 'GASTROMATCH-PIX-DEMO',
+        'receitas' => $receitasAvaliacao,
     ]);
 }
 
@@ -1166,7 +1212,11 @@ if ($action === 'simular_pagamento_pix') {
         }
         if ($pagamento['status'] === 'aprovado') {
             $pdo->commit();
-            jsonReply(true, 'Esta simulação já foi confirmada.', ['status' => 'aprovado']);
+            jsonReply(true, 'Esta simulação já foi confirmada.', [
+                'status' => 'aprovado',
+                'id_pedido' => (int)$pagamento['id_pedido'],
+                'receitas' => getOrderReviewRecipes($pdo, (int)$pagamento['id_pedido']),
+            ]);
         }
         if ($pagamento['status'] !== 'pendente') {
             $pdo->rollBack();
@@ -1177,9 +1227,14 @@ if ($action === 'simular_pagamento_pix') {
             ->execute([':id' => (int)$pagamento['id_pagamento']]);
         $pdo->prepare('UPDATE pedidos SET status_pedido = "confirmado" WHERE id_pedido = :id')
             ->execute([':id' => (int)$pagamento['id_pedido']]);
+        $receitasAvaliacao = getOrderReviewRecipes($pdo, (int)$pagamento['id_pedido']);
         $pdo->commit();
 
-        jsonReply(true, 'Pagamento Pix de demonstração confirmado.', ['status' => 'aprovado']);
+        jsonReply(true, 'Pagamento Pix de demonstração confirmado.', [
+            'status' => 'aprovado',
+            'id_pedido' => (int)$pagamento['id_pedido'],
+            'receitas' => $receitasAvaliacao,
+        ]);
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) {
             $pdo->rollBack();

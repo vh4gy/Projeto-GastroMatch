@@ -173,6 +173,10 @@ async function entrar(e){
     setTimeout(() => { window.location.href = redirect; }, 350);
     return;
   } catch (erro) {
+    if (erro.message?.includes('Verificação em duas etapas pendente')) {
+      $('#campoCodigoVerificacao').hidden = false;
+      $('#codigoVerificacao').focus();
+    }
     msg.textContent = erro.message || 'E-mail ou senha inválidos.';
     msg.className = 'login-msg erro';
     return;
@@ -229,15 +233,22 @@ async function criarConta(e){
   try {
     const usuario = await criarContaNoBanco({ nome, email, password: senha, tipo_usuario: tipo, cnpj, empresa, relato_profissional: relatoProfissional, link_evidencia: linkEvidencia, verificacao_2fa: verificacao2fa });
     if (usuario.verificacao_2fa === 1 && usuario.email_verificado === 0) {
-      if (usuario.verification_sent) {
-        localStorage.removeItem('gm_verificacao_email');
-        msg.textContent = 'Conta criada. Enviamos o código de verificação para seu e-mail; informe-o ao entrar.';
-      } else {
-        localStorage.setItem('gm_verificacao_email', JSON.stringify({ email, codigo: usuario.verification_code || '' }));
-        msg.textContent = `Conta criada em modo de demonstração. Código de verificação: ${usuario.verification_code || 'N/A'} — informe-o ao entrar.`;
+      const codigo = String(usuario.verification_code || '');
+      if (!/^\d{6}$/.test(codigo)) {
+        throw new Error('A conta foi criada, mas a API não retornou o código de demonstração. Atualize a página e tente entrar novamente.');
       }
-      msg.className = 'login-msg ok';
-      setTimeout(() => setAuthMode('login'), 1500);
+      localStorage.setItem('gm_verificacao_email', JSON.stringify({ email, codigo }));
+      $('#loginEmail').value = email;
+      $('#loginPassword').value = senha;
+      $('#codigoVerificacao').value = '';
+      $('#campoCodigoVerificacao').hidden = false;
+      setAuthMode('login');
+      const loginMsg = $('#loginMsg');
+      loginMsg.textContent = `Conta criada. Seu código de verificação é ${codigo}. Digite-o no campo abaixo e clique em Entrar.`;
+      loginMsg.className = 'login-msg ok';
+      $('#entrarBtn').disabled = false;
+      $('#entrarBtn').textContent = 'Entrar com e-mail ou código';
+      $('#codigoVerificacao').focus();
       return;
     }
 

@@ -1126,9 +1126,10 @@ function telaReceita(id) {
 function renderizarAvaliacoes(data, idReceita) {
   const reviews = Array.isArray(data.reviews) ? data.reviews : [];
   const minha = data.current_user_review || null;
-  const form = data.authenticated
+  const form = data.authenticated && data.can_review
     ? `<form class="avaliacao-form" data-receita-id="${idReceita}" onsubmit="enviarAvaliacao(event)">
         <h3>${minha ? 'Edite sua avaliação' : 'Deixe sua avaliação'}</h3>
+        ${minha?.foto_avaliacao ? `<img class="avaliacao-foto-atual" src="${esc(minha.foto_avaliacao)}" alt="Foto atual da sua avaliação">` : ''}
         <fieldset class="campo-nota">
           <legend>Sua nota</legend>
           <div class="avaliacao-estrelas">${[1, 2, 3, 4, 5].map(valor => `<label class="estrela-opcao${minha && valor <= Number(minha.nota) ? ' ativa' : ''}" data-valor="${valor}">
@@ -1137,14 +1138,17 @@ function renderizarAvaliacoes(data, idReceita) {
           </label>`).join('')}</div>
         </fieldset>
         <label class="campo-comentario"><span>Comentário (opcional)</span><textarea name="comentario" maxlength="1000" rows="4" placeholder="Compartilhe o que achou desta receita">${esc(minha?.comentario || '')}</textarea></label>
+        <label class="campo-foto-avaliacao"><span>Foto do kit recebido ou do prato preparado</span><input type="file" name="foto_avaliacao" accept="image/jpeg,image/png,image/webp" onchange="preverFotoAvaliacao(this)"${minha?.foto_avaliacao ? '' : ' required'}><small>JPG, PNG ou WEBP, até 5 MB.${minha?.foto_avaliacao ? ' Envie outra foto para substituir a atual.' : ''}</small><img class="avaliacao-foto-preview" alt="Prévia da foto da avaliação" hidden></label>
         <div class="avaliacao-acoes"><button class="btn" type="submit">${minha ? 'Salvar alterações' : 'Publicar avaliação'}</button><p class="avaliacao-mensagem" role="status" aria-live="polite"></p></div>
       </form>`
+    : data.authenticated
+      ? '<div class="avaliacao-login"><p>Você poderá avaliar depois que o pagamento do kit for confirmado ou o pedido for entregue.</p></div>'
     : `<div class="avaliacao-login"><p>Entre ou crie uma conta para avaliar esta receita.</p><a class="btn" href="login.html">Entrar ou criar conta</a></div>`;
   const lista = reviews.length
     ? `<ol class="avaliacao-lista">${reviews.map(review => {
         const data = String(review.data_avaliacao || '').slice(0, 10).split('-').reverse().join('/');
           const demoBadge = Number(review.demonstracao) === 1 ? '<span class="avaliacao-demo-badge">Demonstração</span>' : '';
-          return `<li class="avaliacao-item"><div class="avaliacao-item-topo"><strong>${esc(review.nome || 'Usuário')}</strong>${demoBadge}${estrelas(review.nota)}<time>${esc(data)}</time></div>${review.comentario ? `<p>${esc(review.comentario)}</p>` : '<p class="avaliacao-sem-comentario">Sem comentário.</p>'}</li>`;
+          return `<li class="avaliacao-item"><div class="avaliacao-item-topo"><strong>${esc(review.nome || 'Usuário')}</strong>${demoBadge}${estrelas(review.nota)}<time>${esc(data)}</time></div>${review.comentario ? `<p>${esc(review.comentario)}</p>` : '<p class="avaliacao-sem-comentario">Sem comentário.</p>'}${review.foto_avaliacao ? `<img class="avaliacao-foto" src="${esc(review.foto_avaliacao)}" alt="Foto enviada por ${esc(review.nome || 'cliente')} na avaliação" loading="lazy">` : ''}</li>`;
       }).join('')}</ol>`
     : '<p class="avaliacoes-vazias">Ainda não há avaliações escritas para esta receita.</p>';
 
@@ -1167,6 +1171,9 @@ async function carregarAvaliacoesReceita(idReceita) {
     const resumo = document.querySelector('.avaliacao-resumo');
     if (resumo) resumo.innerHTML = `${estrelas(payload.data.nota)} <strong>${Number(payload.data.nota || 0).toFixed(1)}</strong> (${Number(payload.data.avaliacoes || 0)} avaliações)`;
     container.innerHTML = renderizarAvaliacoes(payload.data, idReceita);
+    if (location.hash.endsWith('-avaliar')) {
+      container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   } catch (erro) {
     container.innerHTML = '<p class="avaliacoes-erro" role="status">Não foi possível carregar as avaliações agora. Atualize a página para tentar novamente.</p>';
   }
@@ -1189,15 +1196,11 @@ async function enviarAvaliacao(event) {
 
   try {
     const dados = new FormData(form);
+    dados.set('id_receita', form.dataset.receitaId);
     const resposta = await fetch('api.php?action=avaliar', {
       method: 'POST',
       credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id_receita: Number(form.dataset.receitaId),
-        nota: Number(dados.get('nota')),
-        comentario: String(dados.get('comentario') || '').trim(),
-      }),
+      body: dados,
     });
     const payload = await resposta.json();
     if (!resposta.ok || !payload.success) throw new Error(payload.message || 'Não foi possível salvar sua avaliação.');
@@ -1208,6 +1211,23 @@ async function enviarAvaliacao(event) {
   } finally {
     if (botao.isConnected) botao.disabled = false;
   }
+}
+
+function preverFotoAvaliacao(input) {
+  const arquivo = input.files?.[0];
+  const preview = input.closest('.campo-foto-avaliacao')?.querySelector('.avaliacao-foto-preview');
+  if (!arquivo || !preview) return;
+  if (arquivo.size > 5 * 1024 * 1024) {
+    input.value = '';
+    preview.hidden = true;
+    toast('A foto deve ter no máximo 5 MB.');
+    return;
+  }
+  if (preview.dataset.urlAnterior) URL.revokeObjectURL(preview.dataset.urlAnterior);
+  const url = URL.createObjectURL(arquivo);
+  preview.src = url;
+  preview.dataset.urlAnterior = url;
+  preview.hidden = false;
 }
 
 /* ---------- navegação de sessão: Entrar / Sair ---------- */

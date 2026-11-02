@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS avaliacoes_receitas (
     id_usuario INT NOT NULL,
     nota TINYINT UNSIGNED NOT NULL,
     comentario VARCHAR(1000) NOT NULL DEFAULT '',
+    foto_avaliacao VARCHAR(255) NULL,
     data_avaliacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_avaliacao_receita_usuario (id_receita, id_usuario),
     KEY idx_avaliacao_receita_data (id_receita, data_avaliacao),
