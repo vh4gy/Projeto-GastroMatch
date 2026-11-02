@@ -8,8 +8,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Open+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link href="https://api.mapbox.com/mapbox-gl-js/v2.9.2/mapbox-gl.css" rel="stylesheet" />
-  <link rel="stylesheet" href="Estilo/estilo.css?v=20261102-1">
+  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+  <link rel="stylesheet" href="Estilo/estilo.css?v=20261102-7">
 </head>
 <body>
   <header class="site-header">
@@ -26,6 +26,7 @@
         <a href="#inicio" data-p="inicio">Início</a>
         <a href="#perto" data-p="perto">Perto de você</a>
         <a href="#feed" data-p="feed">Feed de receitas</a>
+        <a href="#rastreio" data-p="rastreio">Rastrear pedido</a>
         <a href="#perfil" data-p="perfil">Perfil</a>
         <a href="#chef" data-p="chef">Painel do Chef</a>
         <a class="link-login" id="loginNav" href="login.html">Entrar</a>
@@ -56,6 +57,7 @@
   </footer>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="Codigo/codigo.js?v=20261102-1"></script>
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="Codigo/codigo.js?v=20261102-7"></script>
 </body>
 </html>

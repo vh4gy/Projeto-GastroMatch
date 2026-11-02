@@ -11,15 +11,53 @@
    No back-end real, troque as funções de localStorage por API/SQL.
    ========================================================== */
 
-const MAPBOX_PUBLIC_KEY = 'SEU_TOKEN_PUBLICO';
+/* ==========================================================
+   MAPA — "Perto de você" e rastreio do pedido
 
+   Usa MapLibre GL (biblioteca livre) + mapa do OpenStreetMap + rota do OSRM.
+   Não precisa de chave, token nem cadastro.
+   Observação: os servidores públicos do OpenStreetMap e do OSRM são gratuitos
+   para uso leve (como esta demonstração). Para um site de verdade, o ideal é
+   usar um provedor próprio ou contratado.
+   ========================================================== */
+const MAPA_TILES_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const ROTA_API_URL = 'https://router.project-osrm.org/route/v1/driving';
+const MAPA_ESTILO = {
+  version: 8,
+  sources: {
+    osm: {
+      type: 'raster',
+      tiles: [MAPA_TILES_URL],
+      tileSize: 256,
+      maxzoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors'
+    }
+  },
+  layers: [{ id: 'osm', type: 'raster', source: 'osm' }]
+};
+
+// Ponto central da demonstração (endereço de entrega do cliente).
+// Para usar outra cidade, troque lat/lng (clique com o botão direito no Google Maps para copiar).
+const CENTRO_DEMO = { nome: 'Centro de Maravilha (demonstração)', lat: -26.7606, lng: -53.1748 };
+
+const RAIO_ENTREGA_PADRAO_KM = 2.5;
+const PREPARO_SIMULACAO_MS = 3500;  // tempo "preparando no restaurante" antes de o entregador sair
+const DURACAO_SIMULACAO_MS = 40000; // a viagem simulada dura 40 s na tela
+
+// Restaurantes FICTÍCIOS, posicionados por distância (km) em relação ao centro.
+// norte > 0 = ao norte, leste > 0 = a leste. Assim eles acompanham o CENTRO_DEMO.
+// ESCALA_DISTANCIA_DEMO aproxima ou afasta todos de uma vez: 1 = cidade grande, 0.6 = cidade de porte médio.
+const ESCALA_DISTANCIA_DEMO = 0.6;
 const restaurantesProximos = [
-  { nome: 'Bairro Gourmet', lat: -23.5762, lng: -46.6768, tempo: '8 min' },
-  { nome: 'Sabor do Centro', lat: -23.5895, lng: -46.6597, tempo: '12 min' },
-  { nome: 'Casa da Massa', lat: -23.5637, lng: -46.6851, tempo: '15 min' },
-  { nome: 'Chef da Rua', lat: -23.6012, lng: -46.6489, tempo: '18 min' },
-  { nome: 'Cozinha do Bairro', lat: -23.5574, lng: -46.6706, tempo: '20 min' }
+  { nome: 'Cozinha do Bairro', norte: 0.33, leste: -0.40 },
+  { nome: 'Casa da Massa', norte: -0.37, leste: -1.88 },
+  { nome: 'Bairro Gourmet', norte: -1.76, leste: -1.03 },
+  { nome: 'Sabor do Centro', norte: -3.24, leste: 0.71 },
+  { nome: 'Chef da Rua', norte: -4.54, leste: 1.81 }
 ];
+
+let mapaPerto = null;
+let mapaRastreio = null;
 
 function distanciaKmEntre(lat1, lng1, lat2, lng2) {
   const toRad = value => (value * Math.PI) / 180;
@@ -30,126 +68,502 @@ function distanciaKmEntre(lat1, lng1, lat2, lng2) {
   return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function montarListaRestaurantesPerto(latAtual, lngAtual) {
-  return restaurantesProximos
-    .map(rest => ({ ...rest, distancia: distanciaKmEntre(latAtual, lngAtual, rest.lat, rest.lng) }))
-    .sort((a, b) => a.distancia - b.distancia)
-    .slice(0, 4)
-    .map(rest => `
+function restaurantesDemo() {
+  return restaurantesProximos.map(rest => {
+    const lat = CENTRO_DEMO.lat + (rest.norte * ESCALA_DISTANCIA_DEMO) / 111.2;
+    const lng = CENTRO_DEMO.lng + (rest.leste * ESCALA_DISTANCIA_DEMO) / (111.2 * Math.cos(CENTRO_DEMO.lat * Math.PI / 180));
+    const distancia = distanciaKmEntre(CENTRO_DEMO.lat, CENTRO_DEMO.lng, lat, lng);
+    return { nome: rest.nome, lat, lng, distancia, tempo: Math.round(8 + distancia * 3.5) };
+  }).sort((a, b) => a.distancia - b.distancia);
+}
+
+// Restaurante que "atende" o pedido na simulação: o mais distante dentro do raio padrão (rota mais visível).
+function restauranteDoPedido() {
+  const lista = restaurantesDemo();
+  const dentro = lista.filter(r => r.distancia <= RAIO_ENTREGA_PADRAO_KM);
+  return (dentro.length ? dentro : lista).slice(-1)[0];
+}
+
+function montarListaRestaurantesPerto(raioKm) {
+  const dentro = restaurantesDemo().filter(rest => rest.distancia <= Number(raioKm));
+  if (!dentro.length) return '<div class="sem-restaurantes">Nenhum restaurante dentro deste raio. Aumente o raio de entrega.</div>';
+  return dentro.map(rest => `
       <div class="restaurante-card">
         <div>
           <span class="eyebrow">restaurante</span>
           <h3>${esc(rest.nome)}</h3>
         </div>
         <div class="restaurante-meta">
-          <span>${rest.tempo}</span>
+          <span>${rest.tempo} min</span>
           <strong>${rest.distancia.toFixed(1)} km</strong>
         </div>
       </div>
     `).join('');
 }
 
-function inicializarMapaPerto(containerId, userLat, userLng, restaurantes) {
-  if (!containerId || !window.mapboxgl || !MAPBOX_PUBLIC_KEY || MAPBOX_PUBLIC_KEY === 'SEU_TOKEN_PUBLICO') return false;
-  const token = MAPBOX_PUBLIC_KEY.trim();
-  if (!token || token === 'SEU_TOKEN_PUBLICO') return false;
+function circuloGeoJSON(lat, lng, raioKm, passos = 72) {
+  const coords = [];
+  for (let i = 0; i <= passos; i++) {
+    const ang = (i / passos) * 2 * Math.PI;
+    const dLat = (raioKm * Math.cos(ang)) / 111.2;
+    const dLng = (raioKm * Math.sin(ang)) / (111.2 * Math.cos(lat * Math.PI / 180));
+    coords.push([lng + dLng, lat + dLat]);
+  }
+  return { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [coords] } };
+}
+
+function estadoMapa() {
+  return window.maplibregl ? 'ok' : 'sem-biblioteca';
+}
+
+function mostrarMapaIndisponivel(mapEl, titulo) {
+  mapEl.innerHTML = `<div class="mapa-vazio"><div><strong>${titulo}</strong><p>Não foi possível carregar o mapa. Confira a conexão com a internet e o script do MapLibre no index.html.</p></div></div>`;
+}
+
+function limparMapas() {
+  [mapaPerto, mapaRastreio].forEach(estado => {
+    if (!estado) return;
+    if (estado.raf) cancelAnimationFrame(estado.raf);
+    try { if (estado.map) estado.map.remove(); } catch (e) { /* mapa já removido */ }
+  });
+  mapaPerto = null;
+  mapaRastreio = null;
+}
+
+function criarMarcador(classe, emoji, titulo) {
+  const el = document.createElement('div');
+  el.className = `marcador ${classe}`;
+  el.textContent = emoji;
+  el.title = titulo;
+  return el;
+}
+
+/* ---------- Perto de você ---------- */
+function inicializarMapaPerto() {
+  const mapEl = document.getElementById('mapa-perto');
+  if (!mapEl) return;
+  limparMapas();
+  if (estadoMapa() !== 'ok') { mostrarMapaIndisponivel(mapEl, 'Mapa de restaurantes'); return; }
 
   try {
-    window.mapboxgl.accessToken = token;
-    const map = new window.mapboxgl.Map({
-      container: containerId,
-      style: 'mapbox://styles/mapbox/streets-v11',
-      center: [userLng, userLat],
-      zoom: 12
+    const map = new window.maplibregl.Map({
+      container: mapEl,
+      style: MAPA_ESTILO,
+      center: [CENTRO_DEMO.lng, CENTRO_DEMO.lat],
+      zoom: 13
     });
+    map.addControl(new window.maplibregl.NavigationControl(), 'top-right');
 
-    const userMarker = new window.mapboxgl.Marker({ color: '#f7941d' })
-      .setLngLat([userLng, userLat])
-      .setPopup(new window.mapboxgl.Popup().setHTML('<strong>Você</strong>'))
+    new window.maplibregl.Marker({ color: '#f28a18' })
+      .setLngLat([CENTRO_DEMO.lng, CENTRO_DEMO.lat])
+      .setPopup(new window.maplibregl.Popup().setHTML(`<strong>Você</strong><br>${esc(CENTRO_DEMO.nome)}`))
       .addTo(map);
 
-    restaurantes.forEach(restaurante => {
-      new window.mapboxgl.Marker({ color: '#2e8b57' })
-        .setLngLat([restaurante.lng, restaurante.lat])
-        .setPopup(new window.mapboxgl.Popup().setHTML(`<strong>${esc(restaurante.nome)}</strong><br>${restaurante.tempo}`))
+    const slider = document.getElementById('raioEntrega');
+    const estado = { map, pronto: false, raio: slider ? Number(slider.value) : RAIO_ENTREGA_PADRAO_KM, marcadores: [] };
+
+    restaurantesDemo().forEach(rest => {
+      const el = criarMarcador('marcador-rest', '🍽️', rest.nome);
+      const marker = new window.maplibregl.Marker({ element: el })
+        .setLngLat([rest.lng, rest.lat])
+        .setPopup(new window.maplibregl.Popup({ offset: 18 }).setHTML(`<strong>${esc(rest.nome)}</strong><br>${rest.distancia.toFixed(1)} km • ${rest.tempo} min<br><small>Restaurante fictício (demonstração)</small>`))
         .addTo(map);
+      estado.marcadores.push({ el, rest });
     });
 
-    map.addControl(new window.mapboxgl.NavigationControl(), 'top-right');
-    userMarker.getElement().title = 'Sua localização';
-    return true;
+    map.on('load', () => {
+      map.addSource('raio-entrega', { type: 'geojson', data: circuloGeoJSON(CENTRO_DEMO.lat, CENTRO_DEMO.lng, estado.raio) });
+      map.addLayer({ id: 'raio-entrega-fill', type: 'fill', source: 'raio-entrega', paint: { 'fill-color': '#266a46', 'fill-opacity': 0.12 } });
+      map.addLayer({ id: 'raio-entrega-line', type: 'line', source: 'raio-entrega', paint: { 'line-color': '#266a46', 'line-width': 2, 'line-dasharray': [2, 2] } });
+      estado.pronto = true;
+      atualizarRaioPerto(estado.raio);
+    });
+
+    mapaPerto = estado;
+    atualizarRaioPerto(estado.raio);
   } catch (error) {
-    console.warn('Mapbox não inicializou nesta página:', error);
-    return false;
+    console.warn('O mapa não inicializou nesta página:', error);
+    mapEl.innerHTML = '<div class="mapa-vazio"><div><strong>Mapa de restaurantes</strong><p>Não foi possível iniciar o mapa. Veja o console do navegador (F12).</p></div></div>';
   }
 }
 
-function inicializarMapasTela() {
-  const pagina = (location.hash.slice(1) || 'inicio');
+function atualizarRaioPerto(valor) {
+  const raio = Number(valor) || RAIO_ENTREGA_PADRAO_KM;
+  const rotulo = document.getElementById('raioValor');
+  const lista = document.getElementById('listaRestaurantes');
+  if (rotulo) rotulo.textContent = `${raio.toString().replace('.', ',')} km`;
+  if (lista) lista.innerHTML = montarListaRestaurantesPerto(raio);
+  if (!mapaPerto) return;
 
-  if (pagina === 'perto') {
-    const mapEl = document.getElementById('mapa-perto');
-    if (!mapEl) return;
-    if (!MAPBOX_PUBLIC_KEY || MAPBOX_PUBLIC_KEY.trim() === 'SEU_TOKEN_PUBLICO') {
-      mapEl.innerHTML = '<div class="mapa-vazio"><strong>Mapa de restaurantes</strong><p>Insira sua chave pública do Mapbox para ativar a visualização.</p></div>';
-      return;
-    }
-    const userLat = -23.5604;
-    const userLng = -46.6667;
-    const restaurantes = restaurantesProximos.map(rest => ({ ...rest, distancia: distanciaKmEntre(userLat, userLng, rest.lat, rest.lng) }));
-    inicializarMapaPerto('mapa-perto', userLat, userLng, restaurantes);
+  mapaPerto.raio = raio;
+  mapaPerto.marcadores.forEach(({ el, rest }) => el.classList.toggle('fora', rest.distancia > raio));
+  if (!mapaPerto.pronto) return;
+
+  const circulo = circuloGeoJSON(CENTRO_DEMO.lat, CENTRO_DEMO.lng, raio);
+  mapaPerto.map.getSource('raio-entrega')?.setData(circulo);
+  const bounds = new window.maplibregl.LngLatBounds();
+  circulo.geometry.coordinates[0].forEach(coord => bounds.extend(coord));
+  mapaPerto.map.fitBounds(bounds, { padding: 36, duration: 400 });
+}
+
+/* ---------- Rastreio do pedido (rota simulada) ---------- */
+async function buscarRota(origem, destino) {
+  const linhaReta = {
+    coords: [origem, destino],
+    minutos: Math.max(1, Math.round(8 + distanciaKmEntre(origem[1], origem[0], destino[1], destino[0]) * 3.5)),
+    real: false
+  };
+  try {
+    const url = `${ROTA_API_URL}/${origem[0]},${origem[1]};${destino[0]},${destino[1]}?overview=full&geometries=geojson`;
+    const resposta = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    if (!resposta.ok) throw new Error(`Rota: HTTP ${resposta.status}`);
+    const dados = await resposta.json();
+    const rota = dados.routes && dados.routes[0];
+    if (dados.code !== 'Ok' || !rota || !rota.geometry || rota.geometry.coordinates.length < 2) throw new Error('Rota vazia');
+    return { coords: rota.geometry.coordinates, minutos: Math.max(1, Math.round(rota.duration / 60)), real: true };
+  } catch (error) {
+    console.warn('Rota real indisponível, usando linha reta:', error);
+    return linhaReta;
   }
+}
 
-  if (pagina === 'rastreio') {
-    const mapEl = document.getElementById('mapa-rastreio');
-    if (!mapEl) return;
-    if (!MAPBOX_PUBLIC_KEY || MAPBOX_PUBLIC_KEY.trim() === 'SEU_TOKEN_PUBLICO') {
-      mapEl.innerHTML = '<div class="mapa-vazio"><strong>Mapa do pedido</strong><p>Coloque sua chave pública do Mapbox para ativar a rota.</p></div>';
-      return;
+function prepararTrajeto(coords) {
+  const acum = [0];
+  for (let i = 1; i < coords.length; i++) {
+    acum.push(acum[i - 1] + distanciaKmEntre(coords[i - 1][1], coords[i - 1][0], coords[i][1], coords[i][0]));
+  }
+  return { coords, acum, total: acum[acum.length - 1] || 1 };
+}
+
+function pontoNoTrajeto(trajeto, progresso) {
+  const alvo = trajeto.total * progresso;
+  let i = 1;
+  while (i < trajeto.acum.length - 1 && trajeto.acum[i] < alvo) i++;
+  const seg = (trajeto.acum[i] - trajeto.acum[i - 1]) || 1;
+  const f = Math.min(1, Math.max(0, (alvo - trajeto.acum[i - 1]) / seg));
+  const a = trajeto.coords[i - 1];
+  const b = trajeto.coords[i];
+  return { ponto: [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f], indice: i };
+}
+
+/* ---------- Tela "Rastrear pedido" ---------- */
+const ICONE_MOTO_SVG = '<svg viewBox="-1 1 48 42" width="30" height="27" fill="#fff" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<circle cx="9" cy="35" r="5" fill="none" stroke-width="3"/><circle cx="38" cy="35" r="5" fill="none" stroke-width="3"/>'
+  + '<path d="M9 35H17C18 30 21 28 25 28H33L38 35" fill="none" stroke-width="3"/><path d="M33 28L31 14H38" fill="none" stroke-width="3.4"/>'
+  + '<rect x="1" y="12" width="15" height="12" rx="3" stroke="none"/><path d="M17 29H30L29 24H17Z" stroke="none"/>'
+  + '<circle cx="24" cy="7" r="4.4" stroke="none"/><path d="M24 13L22 25" fill="none" stroke-width="4.2"/><path d="M25 16L32 14.5" fill="none" stroke-width="3"/></svg>';
+
+const PASSOS_RASTREIO = [
+  { titulo: 'Pedido confirmado', detalhe: 'O restaurante recebeu o seu pedido' },
+  { titulo: 'Preparando no restaurante', detalhe: 'Separando e embalando tudo' },
+  { titulo: 'Saiu para entrega', detalhe: 'O entregador retirou o pedido' },
+  { titulo: 'A caminho', detalhe: 'Acompanhe o trajeto no mapa' },
+  { titulo: 'Entregue', detalhe: 'Bom apetite!' }
+];
+
+function classePassoRastreio(i, atual) {
+  const ultimo = PASSOS_RASTREIO.length - 1;
+  if (i < atual || (atual === ultimo && i === ultimo)) return 'feito';
+  return i === atual ? 'atual' : '';
+}
+
+function montarPassosRastreio(atual) {
+  return PASSOS_RASTREIO.map((passo, i) => `
+      <li class="rt-passo ${classePassoRastreio(i, atual)}">
+        <span class="rt-bolinha">✓</span>
+        <div><strong>${passo.titulo}</strong><small>${passo.detalhe}</small></div>
+      </li>`).join('');
+}
+
+function atualizarPassosRastreio(atual) {
+  document.querySelectorAll('#rtPassos .rt-passo').forEach((li, i) => {
+    li.className = `rt-passo ${classePassoRastreio(i, atual)}`.trim();
+  });
+}
+
+function definirTexto(id, valor) {
+  const el = document.getElementById(id);
+  if (el && el.textContent !== valor) el.textContent = valor;
+}
+
+function formatarKm(km) {
+  return `${km.toFixed(1).replace('.', ',')} km`;
+}
+
+function reiniciarPainelRastreio() {
+  const entregue = document.getElementById('rtEntregue');
+  if (entregue) entregue.hidden = true;
+  const barra = document.getElementById('rtBarra');
+  if (barra) barra.style.width = '0%';
+  definirTexto('statusRastreio', 'Preparando pedido');
+  definirTexto('rtEtaTitulo', 'Chegada em');
+  definirTexto('rtHora', 'Calculando a rota...');
+  definirTexto('rtDistancia', '—');
+  atualizarPassosRastreio(1);
+}
+
+function criarMarcadorMoto() {
+  const raiz = document.createElement('div');
+  raiz.className = 'rt-marker-moto';
+  raiz.title = 'Entregador';
+  const icone = document.createElement('div');
+  icone.className = 'rt-moto-icone';
+  icone.innerHTML = ICONE_MOTO_SVG;
+  raiz.appendChild(icone);
+  return { raiz, icone };
+}
+
+/* Pedido carregado do banco (null = ainda carregando). Em modo demonstração, demo = true e nada é salvo. */
+let pedidoRastreio = null;
+
+const STATUS_POR_ETAPA = { 1: 'preparando', 2: 'enviado', 4: 'entregue' };
+
+function atualizarBotoesRastreio() {
+  const repetir = document.getElementById('rtBtnRepetir');
+  const pagar = document.getElementById('rtPagarPix');
+  const aguardando = !!(pedidoRastreio && pedidoRastreio.statusPedido === 'pendente');
+  if (repetir) {
+    repetir.textContent = pedidoRastreio && pedidoRastreio.entregue ? '↻ Resimular entrega' : '↻ Reiniciar simulação';
+    repetir.hidden = aguardando;
+  }
+  if (pagar) {
+    const link = aguardando && pedidoRastreio.linkPagamento ? pedidoRastreio.linkPagamento : '';
+    pagar.hidden = !link;
+    if (link) pagar.href = link;
+  }
+}
+
+async function carregarPedidoRastreio() {
+  const demo = motivo => ({ demo: true, motivo, id: 12845, valor: 79.9, metodo: '', statusPedido: 'confirmado', entregue: false, persistir: false, linkPagamento: '' });
+  try {
+    const resposta = await fetch('api.php?action=pedido_rastreio', { credentials: 'same-origin', cache: 'no-store' });
+    const payload = await resposta.json().catch(() => null);
+    if (resposta.ok && payload && payload.success && payload.data) {
+      const dados = payload.data;
+      return {
+        demo: false,
+        id: Number(dados.id_pedido),
+        valor: Number(dados.valor_total || 0),
+        metodo: dados.metodo_pagamento || '',
+        statusPedido: dados.status_pedido,
+        entregue: !!dados.entregue,
+        persistir: dados.status_pedido === 'confirmado' && !dados.entregue,
+        linkPagamento: dados.link_pagamento || ''
+      };
     }
+    return demo(resposta.status === 401 ? 'sem-login' : 'sem-pedido');
+  } catch (erro) {
+    console.warn('Não foi possível carregar o pedido para o rastreio:', erro);
+    return demo('offline');
+  }
+}
 
+function aplicarPedidoNaTela(info) {
+  const numero = document.getElementById('rtPedidoNumero');
+  if (numero) numero.innerHTML = `#${Number(info.id)}${info.demo ? '<small>demonstração</small>' : ''}`;
+  definirTexto('rtValor', brl(info.valor));
+  definirTexto('rtPagamento', info.metodo === 'pix' ? 'Pix (simulado)' : info.metodo === 'dinheiro' ? 'Dinheiro na entrega' : '—');
+  const aviso = document.getElementById('rtAviso');
+  if (aviso) {
+    if (!info.demo) aviso.textContent = 'Simulação demonstrativa: não há entregador real nem GPS. O andamento da entrega fica salvo no seu pedido.';
+    else if (info.motivo === 'sem-login') aviso.textContent = 'Simulação demonstrativa. Entre na sua conta para acompanhar e salvar o andamento dos seus pedidos.';
+    else aviso.textContent = 'Simulação demonstrativa com um pedido de exemplo. Não há entregador real nem GPS.';
+  }
+}
+
+async function salvarEtapaEntrega(idPedido, etapa) {
+  const status = STATUS_POR_ETAPA[etapa];
+  if (!status || !idPedido) return;
+  try {
+    const resposta = await fetch('api.php?action=pedido_entrega', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id_pedido: idPedido, status_entrega: status })
+    });
+    const payload = await resposta.json();
+    if (!resposta.ok || !payload.success) throw new Error(payload.message || 'Não foi possível salvar o andamento.');
+    if (payload.data && payload.data.entregue && pedidoRastreio && pedidoRastreio.id === idPedido) {
+      pedidoRastreio.entregue = true;
+      pedidoRastreio.persistir = false;
+      atualizarBotoesRastreio();
+    }
+  } catch (erro) {
+    console.warn('Não foi possível salvar o andamento da entrega:', erro);
+  }
+}
+
+/* Ao abrir a tela: lê o pedido no banco e decide se simula, mostra "já entregue" ou "aguardando pagamento". */
+async function abrirTelaRastreio() {
+  const info = await carregarPedidoRastreio();
+  const aindaNaTela = document.getElementById('mapa-rastreio') && location.hash.slice(1).split('-')[0] === 'rastreio';
+  if (!aindaNaTela) return;
+  pedidoRastreio = info;
+  aplicarPedidoNaTela(info);
+  inicializarRastreio();
+}
+
+/* Botão "Resimular entrega": só repete a animação, não altera o pedido salvo no banco. */
+function resimularRastreio() {
+  inicializarRastreio(true);
+}
+
+function inicializarRastreio(forcarSimulacao = false) {
+  const mapEl = document.getElementById('mapa-rastreio');
+  if (!mapEl) return;
+  limparMapas();
+  reiniciarPainelRastreio();
+
+  const pedido = pedidoRastreio || { demo: true, id: 12845, statusPedido: 'confirmado', entregue: false, persistir: false };
+  let modo = 'simular';
+  if (pedido.statusPedido === 'pendente') modo = 'espera';
+  else if (pedido.entregue && !forcarSimulacao) modo = 'concluido';
+  const opcoes = { modo, persistir: modo === 'simular' && !!pedido.persistir, idPedido: pedido.id };
+  atualizarBotoesRastreio();
+
+  const restaurante = restauranteDoPedido();
+  const origem = [restaurante.lng, restaurante.lat];
+  const destino = [CENTRO_DEMO.lng, CENTRO_DEMO.lat];
+  const estado = { map: null, raf: 0, passo: -1 };
+  mapaRastreio = estado;
+  const rotaPromise = buscarRota(origem, destino);
+
+  if (estadoMapa() === 'ok') {
+    mapEl.innerHTML = '';
     try {
-      window.mapboxgl.accessToken = MAPBOX_PUBLIC_KEY.trim();
-      const origem = [-46.6333, -23.5505];
-      const destino = [-46.6667, -23.5604];
-      const map = new window.mapboxgl.Map({
-        container: 'mapa-rastreio',
-        style: 'mapbox://styles/mapbox/streets-v11',
-        center: origem,
-        zoom: 12
-      });
-
-      map.on('load', () => {
-        new window.mapboxgl.Marker({ color: '#d9534f' }).setLngLat(origem).addTo(map);
-        new window.mapboxgl.Marker({ color: '#2e8b57' }).setLngLat(destino).addTo(map);
-
-        const routeCoordinates = [origem, destino];
-        map.addSource('rota-pedido', {
-          type: 'geojson',
-          data: {
-            type: 'Feature',
-            properties: {},
-            geometry: { type: 'LineString', coordinates: routeCoordinates }
-          }
-        });
-        map.addLayer({
-          id: 'rota-pedido',
-          type: 'line',
-          source: 'rota-pedido',
-          layout: { 'line-join': 'round', 'line-cap': 'round' },
-          paint: { 'line-color': '#2b6cb0', 'line-width': 5 }
-        });
-
-        map.addControl(new window.mapboxgl.NavigationControl(), 'top-right');
-        const bounds = new window.mapboxgl.LngLatBounds();
-        routeCoordinates.forEach(coord => bounds.extend(coord));
-        map.fitBounds(bounds, { padding: 32 });
-      });
+      const map = new window.maplibregl.Map({ container: mapEl, style: MAPA_ESTILO, center: origem, zoom: 13 });
+      map.addControl(new window.maplibregl.NavigationControl(), 'top-right');
+      estado.map = map;
     } catch (error) {
-      console.warn('Mapbox do rastreio não inicializou:', error);
-      mapEl.innerHTML = '<div class="mapa-vazio"><strong>Mapa do pedido</strong><p>A rota simulada não pode ser exibida no momento.</p></div>';
+      console.warn('O mapa do rastreio não inicializou:', error);
+      mostrarMapaIndisponivel(mapEl, 'Mapa do pedido');
+    }
+  } else {
+    mostrarMapaIndisponivel(mapEl, 'Mapa do pedido');
+  }
+
+  const mapaPronto = estado.map
+    ? Promise.race([new Promise(resolve => estado.map.on('load', resolve)), new Promise(resolve => setTimeout(resolve, 8000))])
+    : Promise.resolve();
+
+  Promise.all([rotaPromise, mapaPronto]).then(([rota]) => {
+    if (mapaRastreio !== estado) return; // o usuário saiu da página enquanto carregava
+    iniciarSimulacaoRastreio(estado, rota, origem, destino, restaurante, opcoes);
+  });
+}
+
+function iniciarSimulacaoRastreio(estado, rota, origem, destino, restaurante, opcoes) {
+  const trajeto = prepararTrajeto(rota.coords);
+  const map = estado.map && estado.map.isStyleLoaded() ? estado.map : null;
+  let entregador = null;
+  let iconeMoto = null;
+
+  if (map) {
+    try {
+      new window.maplibregl.Marker({ element: criarMarcador('marcador-rest', '🍽️', restaurante.nome) }).setLngLat(origem).addTo(map);
+      new window.maplibregl.Marker({ element: criarMarcador('marcador-casa pulsa', '🏠', 'Local de entrega') }).setLngLat(destino).addTo(map);
+
+      const linha = coords => ({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } });
+      const layout = { 'line-join': 'round', 'line-cap': 'round' };
+      map.addSource('rota-pedido', { type: 'geojson', data: linha(rota.coords) });
+      map.addLayer({ id: 'rota-contorno', type: 'line', source: 'rota-pedido', layout, paint: { 'line-color': '#ffffff', 'line-width': 11 } });
+      map.addLayer({ id: 'rota-pedido', type: 'line', source: 'rota-pedido', layout, paint: { 'line-color': '#bcd3ee', 'line-width': 7 } });
+      map.addSource('rota-percorrida', { type: 'geojson', data: linha([rota.coords[0], rota.coords[0]]) });
+      map.addLayer({ id: 'rota-percorrida', type: 'line', source: 'rota-percorrida', layout, paint: { 'line-color': '#2b6cb0', 'line-width': 7 } });
+
+      const bounds = new window.maplibregl.LngLatBounds();
+      rota.coords.forEach(coord => bounds.extend(coord));
+      map.fitBounds(bounds, { padding: { top: 80, bottom: 80, left: 80, right: 80 }, duration: 0 });
+
+      const moto = criarMarcadorMoto();
+      iconeMoto = moto.icone;
+      entregador = new window.maplibregl.Marker({ element: moto.raiz }).setLngLat(rota.coords[0]).addTo(map);
+    } catch (error) {
+      console.warn('Não foi possível desenhar a rota no mapa:', error);
     }
   }
+
+  definirTexto('etaRastreio', `${rota.minutos} min`);
+  definirTexto('rtDistancia', `${formatarKm(trajeto.total)} restantes`);
+
+  // Pedido Pix ainda não pago: mostra a rota parada e orienta a concluir o pagamento.
+  if (opcoes.modo === 'espera') {
+    definirTexto('statusRastreio', 'Aguardando pagamento');
+    definirTexto('rtHora', 'Confirme o Pix para liberar a entrega');
+    estado.passo = 0;
+    atualizarPassosRastreio(0);
+    return;
+  }
+
+  const chegada = new Date(Date.now() + rota.minutos * 60000);
+  definirTexto('rtHora', `Chegada prevista às ${chegada.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`);
+
+  let ultimoLng = rota.coords[0][0];
+
+  const desenharFrame = (p, preparando) => {
+    const { ponto, indice } = pontoNoTrajeto(trajeto, p);
+
+    if (entregador) {
+      entregador.setLngLat(ponto);
+      if (Math.abs(ponto[0] - ultimoLng) > 1e-7) {
+        iconeMoto.classList.toggle('virado', ponto[0] < ultimoLng); // vira a moto quando ela segue para o oeste
+        ultimoLng = ponto[0];
+      }
+      const percorrida = map.getSource('rota-percorrida');
+      if (percorrida) percorrida.setData({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: trajeto.coords.slice(0, indice).concat([ponto]) } });
+    }
+
+    let status, etapa;
+    if (preparando) { status = 'Preparando pedido'; etapa = 1; }
+    else if (p >= 1) { status = 'Entregue'; etapa = 4; }
+    else if (p < 0.06) { status = 'Saiu para entrega'; etapa = 2; }
+    else if (p >= 0.85) { status = 'Chegando ao destino'; etapa = 3; }
+    else { status = 'Em rota de entrega'; etapa = 3; }
+
+    definirTexto('statusRastreio', status);
+    if (estado.passo !== etapa) {
+      estado.passo = etapa;
+      atualizarPassosRastreio(etapa);
+      if (opcoes.persistir) salvarEtapaEntrega(opcoes.idPedido, etapa);
+    }
+    const barra = document.getElementById('rtBarra');
+    if (barra) barra.style.width = `${(p * 100).toFixed(1)}%`;
+    definirTexto('rtEtaTitulo', p >= 1 ? 'Pedido' : 'Chegada em');
+    definirTexto('etaRastreio', p >= 1 ? 'Entregue' : `${Math.max(1, Math.ceil(rota.minutos * (1 - p)))} min`);
+    definirTexto('rtDistancia', p >= 1 ? 'Chegou ao destino' : `${formatarKm(trajeto.total * (1 - p))} restantes`);
+
+    if (p >= 1) {
+      definirTexto('rtHora', 'Entrega concluída');
+      definirTexto('rtEntregueDetalhe', opcoes.modo === 'concluido'
+        ? 'Este pedido já foi entregue. Use "Resimular entrega" para ver de novo.'
+        : 'Bom apetite. Que tal ver mais receitas?');
+      const entregue = document.getElementById('rtEntregue');
+      if (entregue) entregue.hidden = false;
+    }
+  };
+
+  // Pedido já entregue: abre direto no estado final, sem reiniciar a animação.
+  if (opcoes.modo === 'concluido') {
+    desenharFrame(1, false);
+    return;
+  }
+
+  const inicio = performance.now();
+  const passo = agora => {
+    if (mapaRastreio !== estado) return;
+    const t = agora - inicio;
+    const preparando = t < PREPARO_SIMULACAO_MS;
+    const p = preparando ? 0 : Math.min(1, (t - PREPARO_SIMULACAO_MS) / DURACAO_SIMULACAO_MS);
+    desenharFrame(p, preparando);
+    if (p < 1) estado.raf = requestAnimationFrame(passo);
+  };
+  estado.raf = requestAnimationFrame(passo);
+}
+
+function inicializarMapasTela() {
+  const pagina = (location.hash.slice(1) || 'inicio').split('-')[0];
+  if (pagina === 'perto') inicializarMapaPerto();
+  if (pagina === 'rastreio') abrirTelaRastreio();
 }
 
 const receitasBase = [
@@ -501,6 +915,122 @@ async function finalizar() {
   location.hash = '#pagamento';
 }
 
+const BAIRROS_MARAVILHA = [
+  'Centro', 'Floresta', 'Novo Bairro', 'União', 'São José', 'Bela Vista',
+  'Padre Antônio', 'Kasper', 'Madalozzo', 'Jardim', 'Frei Damião',
+  'Progresso', 'Morada do Sol', 'José de Anchieta', 'Civemara'
+];
+
+function montarSelectEndereco(campo, rotulo, opcoes, valorAtual = '') {
+  const lista = [...new Set((opcoes || []).filter(Boolean))];
+  const options = lista.map(valor => `<option value="${esc(valor)}" ${valorAtual.toLowerCase() === valor.toLowerCase() ? 'selected' : ''}>${esc(valor)}</option>`).join('');
+  const maxLength = campo === 'logradouro' ? 150 : (campo === 'estado' ? 2 : 100);
+  return `<label class="campo"><span>${rotulo}</span><button type="button" class="endereco-manual-btn" data-endereco-manual-btn="${campo}">Colocar manualmente</button><select name="endereco_${campo}" data-endereco-select="${campo}" required><option value="">Selecione uma opção</option><option value="__manual__">Colocar manualmente</option>${options}</select><input name="endereco_${campo}_manual" data-endereco-manual="${campo}" type="text" maxlength="${maxLength}" placeholder="Digite ${rotulo.toLowerCase()}" hidden></label>`;
+}
+
+function valorEndereco(form, campo) {
+  const select = form.querySelector(`[data-endereco-select="${campo}"]`);
+  if (!select) return '';
+  if (select.value === '__manual__') return String(form.querySelector(`[data-endereco-manual="${campo}"]`)?.value || '').trim();
+  return select.value.trim();
+}
+
+function configurarCamposEndereco() {
+  const form = document.getElementById('pagamentoForm');
+  if (!form) return;
+  form.querySelectorAll('[data-endereco-manual-btn]').forEach(botao => {
+    botao.addEventListener('click', () => {
+      const campo = botao.dataset.enderecoManualBtn;
+      const select = form.querySelector(`[data-endereco-select="${campo}"]`);
+      select.value = '__manual__';
+      select.dispatchEvent(new Event('change'));
+    });
+  });
+  ['estado', 'logradouro', 'bairro', 'cidade'].forEach(campo => {
+    const select = form.querySelector(`[data-endereco-select="${campo}"]`);
+    const manual = form.querySelector(`[data-endereco-manual="${campo}"]`);
+    const atualizar = (focar = false) => {
+      const usarManual = select.value === '__manual__';
+      manual.hidden = !usarManual;
+      manual.required = usarManual;
+      select.required = !usarManual;
+      if (usarManual && focar) manual.focus();
+    };
+    select.addEventListener('change', () => atualizar(true));
+    atualizar();
+  });
+
+  const cepInput = form.elements.endereco_cep;
+  const msg = document.getElementById('cepConsultaMsg');
+  let timer = null;
+  const preencherSelect = (campo, opcoes, valor) => {
+    const select = form.querySelector(`[data-endereco-select="${campo}"]`);
+    const manual = form.querySelector(`[data-endereco-manual="${campo}"]`);
+    const valores = [...new Set((opcoes || []).filter(Boolean))];
+    select.innerHTML = `<option value="">Selecione uma opção</option><option value="__manual__">Colocar manualmente</option>${valores.map(item => `<option value="${esc(item)}">${esc(item)}</option>`).join('')}`;
+    if (valor && valores.some(item => item.toLowerCase() === valor.toLowerCase())) select.value = valores.find(item => item.toLowerCase() === valor.toLowerCase());
+    else select.value = valores.length ? '' : '__manual__';
+    manual.value = valor || '';
+    select.dispatchEvent(new Event('change'));
+  };
+  const consultar = async () => {
+    const cep = String(cepInput.value || '').replace(/\D/g, '');
+    if (cep.length !== 8) return;
+    msg.textContent = 'Consultando CEP...';
+    msg.className = 'campo-ajuda';
+    const cacheKey = `gm_cep_${cep}`;
+    let dados = null;
+    try {
+      const cache = JSON.parse(localStorage.getItem(cacheKey) || 'null');
+      if (cache && Date.now() - cache.salvoEm < 7 * 24 * 60 * 60 * 1000) dados = cache.dados;
+    } catch (_) {}
+    try {
+      if (!dados) {
+        const resposta = await fetch(`api.php?action=consultar_cep&cep=${encodeURIComponent(cep)}`, { cache: 'no-store' });
+        const payload = await resposta.json();
+        if (!resposta.ok || !payload.success) throw new Error(payload.message || 'Consulta indisponível.');
+        dados = payload.data;
+        try { localStorage.setItem(cacheKey, JSON.stringify({ salvoEm: Date.now(), dados })); } catch (_) {}
+      }
+      const cidadeMaravilha = String(dados.cidade || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() === 'maravilha'
+        && String(dados.estado || '').toUpperCase() === 'SC';
+      preencherSelect('estado', dados.estado ? [dados.estado] : [], dados.estado || '');
+      preencherSelect('cidade', dados.cidade ? [dados.cidade] : [], dados.cidade || '');
+      preencherSelect('logradouro', dados.logradouro ? [dados.logradouro] : [], dados.logradouro || '');
+      const bairros = cidadeMaravilha ? BAIRROS_MARAVILHA : (dados.bairro ? [dados.bairro] : []);
+      preencherSelect('bairro', bairros, dados.bairro || '');
+      if (cidadeMaravilha && cep === '89874000') {
+        msg.textContent = 'Maravilha/SC identificada. O CEP é geral: escolha uma sugestão de bairro, confirme o endereço e informe a rua manualmente.';
+        msg.className = 'campo-ajuda sucesso';
+      } else if (dados.bairro) {
+        msg.textContent = 'Endereço localizado. Confira os dados e complete o número.';
+        msg.className = 'campo-ajuda sucesso';
+      } else {
+        msg.textContent = 'Cidade e estado preenchidos. Escolha o bairro ou use “Colocar manualmente”.';
+        msg.className = 'campo-ajuda aviso';
+      }
+    } catch (erro) {
+      if (cep === '89874000') {
+        preencherSelect('estado', ['SC'], 'SC');
+        preencherSelect('cidade', ['Maravilha'], 'Maravilha');
+        preencherSelect('logradouro', [], '');
+        preencherSelect('bairro', BAIRROS_MARAVILHA, '');
+        msg.textContent = 'Consulta externa indisponível. Maravilha/SC foi reconhecida pelo CEP geral; escolha uma sugestão de bairro, confirme o endereço e informe a rua manualmente.';
+      } else {
+        ['estado', 'logradouro', 'bairro', 'cidade'].forEach(campo => preencherSelect(campo, [], ''));
+        msg.textContent = `${erro.message || 'Consulta de CEP indisponível.'} Preencha os campos manualmente.`;
+      }
+      msg.className = 'campo-ajuda aviso';
+    }
+  };
+  cepInput.addEventListener('input', () => {
+    cepInput.value = cepInput.value.replace(/[^0-9-]/g, '').slice(0, 9);
+    clearTimeout(timer);
+    if (cepInput.value.replace(/\D/g, '').length === 8) timer = setTimeout(consultar, 250);
+  });
+  cepInput.addEventListener('blur', consultar);
+}
+
 async function confirmarPagamento(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -519,12 +1049,12 @@ async function confirmarPagamento(event) {
     observacoes: form.elements.observacoes.value.trim(),
     endereco: {
       cep: form.elements.endereco_cep.value,
-      logradouro: form.elements.endereco_logradouro.value.trim(),
+      logradouro: valorEndereco(form, 'logradouro'),
       numero: form.elements.endereco_numero.value.trim(),
       complemento: form.elements.endereco_complemento.value.trim(),
-      bairro: form.elements.endereco_bairro.value.trim(),
-      cidade: form.elements.endereco_cidade.value.trim(),
-      estado: form.elements.endereco_estado.value.trim()
+      bairro: valorEndereco(form, 'bairro'),
+      cidade: valorEndereco(form, 'cidade'),
+      estado: valorEndereco(form, 'estado')
     },
     pix_banco: form.elements.pix_banco?.value || '',
     pix_titular: form.elements.pix_titular?.value.trim() || '',
@@ -651,17 +1181,21 @@ const telas = {
   },
 
   perto() {
-    const userLat = -23.5604;
-    const userLng = -46.6667;
-    const restaurantes = montarListaRestaurantesPerto(userLat, userLng);
+    const raio = RAIO_ENTREGA_PADRAO_KM;
+    const restaurantes = montarListaRestaurantesPerto(raio);
     return `<section class="pagina">
       <div class="pagina-cabecalho"><div><span class="eyebrow">logística local</span><h2>Perto de você</h2><p>Veja quais restaurantes ficam mais próximos da sua localização e simule a rota do pedido.</p></div></div>
-      <div class="local-box"><div class="local-icone">⌖</div><div><h3>Disponibilidade regional</h3><p>Se o navegador tiver permissão para geolocalização, o mapa usa sua posição real. Se não, usa uma localização demonstrativa em São Paulo.</p></div></div>
+      <div class="local-box"><div class="local-icone">⌖</div><div><h3>Disponibilidade regional</h3><p>Nesta demonstração o mapa usa um ponto central fixo e restaurantes fictícios, só para mostrar como funciona a entrega regional. Ajuste o raio de entrega para ver quais restaurantes atendem o endereço.</p></div></div>
       <div class="mapa-container">
         <div id="mapa-perto" class="mapa-localizacao"></div>
         <div class="mapa-fallback">
           <strong>Restaurantes próximos</strong>
-          <div class="lista-restaurantes">${restaurantes}</div>
+          <div class="raio-controle">
+            <label for="raioEntrega"><span>Raio de entrega</span><strong id="raioValor">${String(raio).replace('.', ',')} km</strong></label>
+            <input id="raioEntrega" type="range" min="0.5" max="5" step="0.5" value="${raio}" oninput="atualizarRaioPerto(this.value)">
+          </div>
+          <div class="lista-restaurantes" id="listaRestaurantes">${restaurantes}</div>
+          <p class="aviso-demo-mapa">Restaurantes fictícios, usados apenas para demonstrar o funcionamento do site.</p>
         </div>
       </div>
       <div class="grade destaque-grid">${receitas.slice(0, 3).map(r => cardReceita(r, true)).join('')}</div>
@@ -669,33 +1203,42 @@ const telas = {
   },
 
   rastreio() {
-    const pedidoSalvo = (() => {
-      try { return JSON.parse(sessionStorage.getItem('gm_ultimo_pedido') || 'null'); } catch (e) { return null; }
-    })();
-    const pedidoNumero = pedidoSalvo?.id_pedido || 12845;
-    const valor = pedidoSalvo?.valor_total || 79.9;
-    const status = pedidoSalvo?.status_pedido || 'Em rota de entrega';
+    const restPedido = restauranteDoPedido();
     return `<section class="pagina pagina-rastreio">
-      <div class="pagina-cabecalho"><div><span class="eyebrow">rastreio do pedido</span><h2>Seu pedido está a caminho</h2><p>O mapa mostra a rota simulada do entregador até a sua casa.</p></div><a href="#inicio" class="btn btn-ghost">← Voltar ao início</a></div>
-      <div class="rastreio-layout">
-        <div class="rastreio-card">
-          <div class="rastreio-header">
-            <div>
-              <span class="eyebrow">pedido</span>
-              <h3>#${pedidoNumero}</h3>
-            </div>
-            <span class="status-entrega">${esc(status)}</span>
+      <div class="pagina-cabecalho"><div><span class="eyebrow">rastreio do pedido</span><h2>Acompanhe a sua entrega</h2><p>Veja o entregador sair do restaurante e percorrer o caminho até você. Tudo aqui é uma simulação demonstrativa.</p></div><a href="#inicio" class="btn btn-ghost">← Voltar ao início</a></div>
+      <div class="rt-layout">
+        <div class="rt-mapa-card">
+          <div class="rt-mapa-topo">
+            <div><span class="eyebrow">pedido</span><h3 id="rtPedidoNumero">Carregando...</h3></div>
+            <span class="status-entrega" id="statusRastreio">Carregando pedido...</span>
           </div>
-          <div id="mapa-rastreio" class="mapa-localizacao mapa-rastreio"></div>
-          <button class="btn" type="button" onclick="location.hash='#inicio'">Voltar ao menu</button>
+          <div class="rt-mapa-wrap">
+            <div id="mapa-rastreio" class="mapa-localizacao mapa-rastreio"></div>
+            <div class="rt-entregue" id="rtEntregue" hidden>
+              <span class="rt-entregue-icone">✓</span>
+              <div><strong>Pedido entregue!</strong><small id="rtEntregueDetalhe">Bom apetite. Que tal ver mais receitas?</small></div>
+              <button class="btn" type="button" onclick="location.hash='#feed'">Ver receitas</button>
+            </div>
+          </div>
+          <div class="rt-barra"><div class="rt-barra-fill" id="rtBarra"></div></div>
+          <div class="rt-legenda"><span>🍽️ ${esc(restPedido.nome)}</span><span id="rtDistancia">—</span><span>🏠 Você</span></div>
         </div>
-        <aside class="resumo-pedido">
-          <span class="eyebrow">resumo do trajeto</span>
-          <div class="linha-resumo"><span>Entregador</span><strong>Lucas A.</strong></div>
-          <div class="linha-resumo"><span>Valor</span><strong>${brl(valor)}</strong></div>
-          <div class="linha-resumo"><span>Tempo estimado</span><strong>18 min</strong></div>
-          <div class="linha-resumo total-final"><span>Local de entrega</span><strong>Centro</strong></div>
-          <button class="btn btn-ghost" type="button" onclick="location.hash='#perto'">Ver restaurantes próximos</button>
+        <aside class="rt-lateral">
+          <div class="rt-eta"><span id="rtEtaTitulo">Chegada em</span><strong id="etaRastreio">${restPedido.tempo} min</strong><small id="rtHora">Carregando...</small></div>
+          <ol class="rt-passos" id="rtPassos">${montarPassosRastreio(1)}</ol>
+          <div class="rt-entregador"><div class="rt-entregador-avatar">LA</div><div><strong>Lucas A.</strong><small>Entregador • ⭐ 4,9</small></div></div>
+          <div class="rt-resumo">
+            <div class="rt-linha"><span>Restaurante</span><strong>${esc(restPedido.nome)}</strong></div>
+            <div class="rt-linha"><span>Valor</span><strong id="rtValor">—</strong></div>
+            <div class="rt-linha"><span>Pagamento</span><strong id="rtPagamento">—</strong></div>
+            <div class="rt-linha"><span>Local de entrega</span><strong>${esc(CENTRO_DEMO.nome.replace(' (demonstração)', ''))}</strong></div>
+          </div>
+          <div class="rt-acoes">
+            <a class="btn" id="rtPagarPix" href="#" hidden>Ir para o pagamento Pix</a>
+            <button class="btn" id="rtBtnRepetir" type="button" onclick="resimularRastreio()">↻ Reiniciar simulação</button>
+            <button class="btn btn-ghost" type="button" onclick="location.hash='#perto'">Ver restaurantes próximos</button>
+          </div>
+          <p class="aviso-demo-mapa" id="rtAviso">Simulação demonstrativa: não há entregador real nem GPS.</p>
         </aside>
       </div>
     </section>`;
@@ -811,13 +1354,13 @@ const telas = {
 
           <div class="form-grid">
             <label class="campo campo-span"><span>Nome do pagador</span><input name="nome_pagador" type="text" value="${esc(perfilAtual.nome || 'Cliente GastroMatch')}" required></label>
-            <label class="campo"><span>CEP</span><input name="endereco_cep" type="text" inputmode="numeric" maxlength="9" placeholder="00000-000" required></label>
-            <label class="campo"><span>Estado (UF)</span><input name="endereco_estado" type="text" maxlength="2" placeholder="SP" required></label>
-            <label class="campo campo-span"><span>Logradouro</span><input name="endereco_logradouro" type="text" maxlength="150" placeholder="Rua ou avenida" required></label>
+            <label class="campo"><span>CEP</span><input name="endereco_cep" type="text" inputmode="numeric" maxlength="9" placeholder="00000-000" required><small id="cepConsultaMsg" class="campo-ajuda" role="status" aria-live="polite">Digite o CEP para consultar. Se a API falhar, use “Colocar manualmente”.</small></label>
+            ${montarSelectEndereco('estado', 'Estado (UF)', [])}
+            <div class="campo campo-span">${montarSelectEndereco('logradouro', 'Logradouro', []).replace('<label class="campo">','<div class="campo">').replace('</label>','</div>')}</div>
             <label class="campo"><span>Número</span><input name="endereco_numero" type="text" maxlength="20" required></label>
             <label class="campo"><span>Complemento (opcional)</span><input name="endereco_complemento" type="text" maxlength="100"></label>
-            <label class="campo"><span>Bairro</span><input name="endereco_bairro" type="text" maxlength="100" required></label>
-            <label class="campo"><span>Cidade</span><input name="endereco_cidade" type="text" maxlength="100" required></label>
+            ${montarSelectEndereco('bairro', 'Bairro', [])}
+            ${montarSelectEndereco('cidade', 'Cidade', [])}
             <label class="campo campo-span"><span>Observações do pedido (opcional)</span><textarea name="observacoes" rows="3" maxlength="2000" placeholder="Instruções para entrega ou preparo"></textarea></label>
           </div>
 
@@ -1297,6 +1840,7 @@ function atualizarMetodoPagamento() {
 function rota() {
   const [pag, id] = (location.hash.slice(1) || 'inicio').split('-');
   document.querySelectorAll('#menu a').forEach(a => a.classList.toggle('ativo', a.dataset.p === pag));
+  limparMapas();
   $('#app').innerHTML = pag === 'receita' ? telaReceita(id) : (telas[pag] || telas.inicio)();
   if (pag === 'receita') carregarAvaliacoesReceita(id);
   perfilAtual = carregarPerfil(); atualizarAvatarMini(); salvarCesta(); atualizarBotaoSessao();
@@ -1307,6 +1851,7 @@ function rota() {
         input.addEventListener('change', atualizarMetodoPagamento);
       });
       atualizarMetodoPagamento();
+      configurarCamposEndereco();
     }, 0);
   }
   if (['perto', 'rastreio'].includes(pag)) {

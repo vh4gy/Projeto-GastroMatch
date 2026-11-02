@@ -19,14 +19,72 @@ function validarEmailReal(email) {
 }
 
 function validarCnpjFormato(cnpj) {
-  const valor = String(cnpj || '').replace(/\D/g, '');
-  return valor.length === 14;
+  const valor = String(cnpj || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!/^[A-Z0-9]{12}\d{2}$/.test(valor) || /^(.)\1{13}$/.test(valor)) return false;
+  const valores = Array.from(valor, caractere => caractere.charCodeAt(0) - 48);
+  const pesos1 = [5,4,3,2,9,8,7,6,5,4,3,2];
+  const pesos2 = [6,5,4,3,2,9,8,7,6,5,4,3,2];
+  let soma = pesos1.reduce((total, peso, i) => total + valores[i] * peso, 0);
+  let resto = soma % 11;
+  const dv1 = resto < 2 ? 0 : 11 - resto;
+  if (valores[12] !== dv1) return false;
+  soma = pesos2.reduce((total, peso, i) => total + valores[i] * peso, 0);
+  resto = soma % 11;
+  const dv2 = resto < 2 ? 0 : 11 - resto;
+  return valores[13] === dv2;
 }
 
 function formatarCnpj(valor) {
-  const digits = String(valor || '').replace(/\D/g, '').slice(0, 14);
+  const digits = String(valor || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 14);
   if (!digits) return '';
-  return digits.replace(/(\d{2})(\d)/, '$1.$2').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d{1,4})$/, '$1/$2').replace(/(\d{4})(\d)/, '$1-$2');
+  let formatado = digits.slice(0, 2);
+  if (digits.length > 2) formatado += '.' + digits.slice(2, 5);
+  if (digits.length > 5) formatado += '.' + digits.slice(5, 8);
+  if (digits.length > 8) formatado += '/' + digits.slice(8, 12);
+  if (digits.length > 12) formatado += '-' + digits.slice(12, 14);
+  return formatado;
+}
+
+async function consultarCnpjCadastro() {
+  const input = $('#registroCnpj');
+  const msg = $('#cnpjConsultaMsg');
+  const empresa = $('#registroEmpresa');
+  const cnpj = String(input?.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!msg) return;
+  if (!validarCnpjFormato(cnpj)) {
+    msg.textContent = 'Digite os 14 caracteres do CNPJ para consultar.';
+    msg.className = 'campo-ajuda erro';
+    return;
+  }
+  msg.textContent = 'Consultando a situação cadastral...';
+  msg.className = 'campo-ajuda';
+  const botao = $('#consultarCnpjBtn');
+  if (botao) botao.disabled = true;
+  try {
+    const resposta = await fetch('api.php?action=consultar_cnpj', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cnpj })
+    });
+    const payload = await resposta.json();
+    if (!resposta.ok || !payload.success) {
+      if (payload.data?.fallback) {
+        msg.textContent = 'BrasilAPI indisponível. O cadastro poderá seguir para análise manual, sem validação automática.';
+        msg.className = 'campo-ajuda aviso';
+        return;
+      }
+      throw new Error(payload.message || 'Não foi possível validar o CNPJ.');
+    }
+    const dados = payload.data;
+    if (dados.status !== 'ativo') throw new Error('CNPJ localizado, mas não está ativo. O cadastro não poderá prosseguir.');
+    if (empresa && !empresa.value.trim()) empresa.value = dados.nome_fantasia || dados.razao_social || '';
+    msg.textContent = `CNPJ ativo: ${dados.razao_social || 'Empresa localizada'}${dados.nome_fantasia ? ` • ${dados.nome_fantasia}` : ''}. A aprovação do perfil continua dependendo da equipe.`;
+    msg.className = 'campo-ajuda sucesso';
+  } catch (erro) {
+    msg.textContent = erro.message || 'Falha na consulta. Tente novamente ou aguarde para análise manual se a API estiver fora do ar.';
+    msg.className = 'campo-ajuda erro';
+  } finally {
+    if (botao) botao.disabled = false;
+  }
 }
 
 function setAuthMode(mode) {
@@ -219,7 +277,7 @@ async function criarConta(e){
   }
   if (['chef', 'restaurante'].includes(tipo)) {
     if (!validarCnpjFormato(cnpj)) {
-      msg.textContent = 'Informe os 14 dígitos do CNPJ da empresa ou do perfil profissional.';
+      msg.textContent = 'Informe um CNPJ numérico ou alfanumérico válido, com 14 caracteres e dígitos verificadores corretos.';
       msg.className = 'login-msg erro';
       return;
     }
@@ -295,13 +353,19 @@ function atualizarCamposRegistro() {
 $('#registroTipo')?.addEventListener('change', atualizarCamposRegistro);
 $('#registroCnpj')?.addEventListener('input', function() {
   this.value = formatarCnpj(this.value);
+  const status = $('#cnpjConsultaMsg'); if (status) { status.textContent = ''; status.className = 'campo-ajuda'; }
 });
+$('#registroCnpj')?.addEventListener('blur', () => {
+  const digits = String($('#registroCnpj')?.value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (validarCnpjFormato(digits)) consultarCnpjCadastro();
+});
+$('#consultarCnpjBtn')?.addEventListener('click', consultarCnpjCadastro);
 
 document.querySelectorAll('.role-card').forEach(btn => btn.addEventListener('click', () => selecionarPerfil(btn.dataset.role)));
 document.querySelectorAll('[data-demo-role]').forEach(btn => btn.addEventListener('click', () => {
   setAuthMode('login');
   selecionarPerfil(btn.dataset.demoRole);
-  $('#codigoAcesso').value = ACESSOS[btn.dataset.demoRole].code;
+  $('#codigoAcesso').value = btn.dataset.demoCode || ACESSOS[btn.dataset.demoRole].code;
 }));
 document.querySelectorAll('.auth-tab').forEach(btn => btn.addEventListener('click', () => setAuthMode(btn.dataset.authTab)));
 $('#loginForm')?.addEventListener('submit', entrar);

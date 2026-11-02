@@ -22,13 +22,13 @@ A proposta principal é aproximar o usuário da experiência profissional da coz
 ## Funcionalidades principais
 
 - Login com e-mail e senha consultando o banco
-- cadastro com validação de e-mail e conferência do formato do CNPJ
+- cadastro com validação de e-mail, dígitos verificadores de CNPJ numérico e alfanumérico e consulta cadastral pela BrasilAPI
 - verificação em duas etapas opcional
 - painel de perfil com dados vindos do banco
 - criação e listagem de receitas
 - filtros por dificuldade, tempo e restrições (vegano, vegetariano, sem glúten, lactose, ovos, amendoim, frutos do mar e baixo sódio)
 - compra de kits de ingredientes
-- checkout com endereço, observações, itens e status de entrega
+- checkout com consulta de CEP pela BrasilAPI, listas de endereço com preenchimento manual alternativo, observações, itens e status de entrega
 - pagamento Pix demonstrativo com registro no banco, sem gateway financeiro
 - controle de estoque dos kits durante a criação do pedido
 - persistência em banco de dados MySQL
@@ -44,6 +44,7 @@ A proposta principal é aproximar o usuário da experiência profissional da coz
 - [Banco de dados/migracao_avaliacoes.sql](Banco%20de%20dados/migracao_avaliacoes.sql) — tabela de avaliações por receita e usuário
 - [Banco de dados/migracao_avaliacoes_demo.sql](Banco%20de%20dados/migracao_avaliacoes_demo.sql) — exemplos rotulados e média combinada de avaliações
 - [Banco de dados/migracao_pix_verificacao.sql](Banco%20de%20dados/migracao_pix_verificacao.sql) — dados do Pix simulado e fila de verificação profissional
+- [Banco de dados/migracao_brasilapi.sql](Banco%20de%20dados/migracao_brasilapi.sql) — integração BrasilAPI, dados da consulta de CNPJ, conta fictícia pendente e recuperação local do administrador
 - [Codigo/codigo.js](Codigo/codigo.js) — lógica principal do site
 - [Codigo/login.js](Codigo/login.js) — autenticação e cadastro
 - [Estilo/estilo.css](Estilo/estilo.css) — estilos gerais
@@ -81,7 +82,7 @@ Essas tabelas sustentam o cadastro, autenticação, criação de receitas, kits 
 O sistema realiza:
 
 - validação de e-mail
-- campo de CNPJ para chef/restaurante (14 dígitos; autenticidade fica pendente de integração com API)
+- campo de CNPJ numérico ou alfanumérico para chef/restaurante, com cálculo dos dígitos verificadores e consulta cadastral
 - login com e-mail e senha consultando a tabela `usuarios`
 - verificação em duas etapas opcional
 - sessão autenticada no servidor PHP, com cookie `HttpOnly`; `sessionStorage` mantém apenas o estado visual do navegador
@@ -115,6 +116,8 @@ Para mostrar atividade inicial sem apresentar comentários fictícios como reais
 
 Para atualizar pagamentos e criar a fila humana de chefs, execute uma vez [Banco de dados/migracao_pix_verificacao.sql](Banco%20de%20dados/migracao_pix_verificacao.sql) depois da migração do checkout. Ela preserva pagamentos antigos, cria os campos do Pix demonstrativo e a tabela `verificacoes_criadores`, e inicializa o hash da conta administrativa local. Em cada ambiente, use uma senha privada e não compartilhe credenciais.
 
+Depois de `migracao_pix_verificacao.sql`, execute uma vez [Banco de dados/migracao_brasilapi.sql](Banco%20de%20dados/migracao_brasilapi.sql). Ela adiciona o resultado da consulta de CNPJ à fila administrativa, cria uma conta de chef fictícia pendente para testar a aprovação e redefine a senha local do administrador. A senha temporária é entregue separadamente; altere-a após a apresentação.
+
 O arquivo de migração usa comandos `ALTER TABLE` compatíveis com MySQL/MariaDB sem `ADD COLUMN IF NOT EXISTS`, que não está disponível em todas as versões. Execute-o uma única vez em cada cópia existente do banco. Para duas pessoas trabalhando em máquinas diferentes, cada uma aplica a mesma migração ao seu banco local; isso sincroniza o esquema, mas não sincroniza os dados. Compartilhar dados entre máquinas exige configurar um único servidor MySQL acessível a ambas.
 
 ### Passo 3: colocar o projeto na pasta do servidor
@@ -145,13 +148,18 @@ Os dados do banco podem ser acessados após a importação do script SQL. O sist
 Na tela de login, selecione o perfil correspondente e use um dos códigos abaixo. Eles funcionam sem informar e-mail, nome de usuário ou senha:
 
 - Cliente: `GM-CLI-2026`
-- Chef / Criador: `GM-CHEF-2026`
+- Chef aprovado: `GM-CHEF-2026`
+- Chef pendente (teste de CNPJ fictício): `GM-CHEF-TESTE-2026`
 
 O administrador deve selecionar o perfil Administrador e entrar com `admin@gastromatch.com.br` e a senha privada configurada no banco local. Não use códigos públicos para acesso administrativo.
 
 ### Verificação de criadores
 
-Chefes e restaurantes informam CNPJ, empresa, relato profissional e um link opcional de evidência. A solicitação permanece pendente até análise humana no painel restrito. O CNPJ não aprova a conta automaticamente, e o servidor bloqueia a publicação de receitas até a equipe aprovar. O parecer pode pedir ajustes e o candidato pode reenviar a solicitação. Para uso fora do ambiente local, configure uma senha administrativa privada e não compartilhe credenciais.
+Chefes e restaurantes informam CNPJ, empresa, relato profissional e um link opcional de evidência. O servidor confere os dígitos verificadores e consulta a situação cadastral pela BrasilAPI. CNPJ não encontrado ou com situação diferente de ATIVA não é aceito no cadastro normal. Se a BrasilAPI estiver indisponível, o cadastro pode seguir com indicação de consulta pendente e permanece sujeito à análise manual. A consulta do CNPJ nunca aprova o perfil automaticamente: a equipe ainda precisa analisar as evidências no painel restrito. O parecer pode pedir ajustes e o candidato pode reenviar a solicitação.
+
+A consulta externa usa HTTPS, timeout e validação TLS. A aplicação não depende dela para o checkout: a consulta de CEP tem cache local por sete dias e todos os campos de endereço possuem a opção “Colocar manualmente”. Para o CEP geral 89874-000, o sistema sugere bairros de Maravilha/SC; como esse CEP não identifica uma rua ou bairro específico, o logradouro deve ser preenchido manualmente.
+
+A migração cria também a conta `chef.teste@gastromatch.com.br`, com o código `GM-CHEF-TESTE-2026`, para demonstrar uma solicitação pendente. O CNPJ `00.000.000/0000-00` é fictício, inválido e marcado explicitamente como demonstração; não deve ser usado como empresa real. Para uso fora do ambiente local, configure uma senha administrativa privada e não compartilhe credenciais.
 
 ### Pedidos e pagamentos demonstrativos
 
@@ -162,7 +170,7 @@ O checkout oferece Pix simulado e dinheiro na entrega. A simulação Pix pede ba
 ## Validações de segurança implementadas
 
 - e-mail com domínio válido
-- formato de 14 dígitos do CNPJ para chef/restaurante
+- validação de CNPJ numérico e alfanumérico com 14 caracteres e dígitos verificadores
 - validação do tipo de conta
 - prevenção de cadastro duplicado
 - senha mínima de 6 caracteres

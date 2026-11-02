@@ -76,8 +76,88 @@ function emailLooksValid(string $email): bool
 
 function cnpjHasValidFormat(string $cnpj): bool
 {
-    $cnpj = preg_replace('/\D+/', '', $cnpj);
-    return strlen($cnpj) === 14;
+    $cnpj = strtoupper(preg_replace('/[^A-Z0-9]+/i', '', $cnpj));
+    if (!preg_match('/^[A-Z0-9]{12}[0-9]{2}$/', $cnpj) || preg_match('/^([A-Z0-9])\1{13}$/', $cnpj)) {
+        return false;
+    }
+
+    // A Receita Federal define o valor de cada caractere como ASCII - 48.
+    $values = array_map(static fn(string $char): int => ord($char) - 48, str_split($cnpj));
+    $weightsFirst = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+    $weightsSecond = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+    $sum = 0;
+    foreach ($weightsFirst as $i => $weight) $sum += $values[$i] * $weight;
+    $remainder = $sum % 11;
+    $first = $remainder < 2 ? 0 : 11 - $remainder;
+    if ($values[12] !== $first) return false;
+
+    $sum = 0;
+    foreach ($weightsSecond as $i => $weight) $sum += $values[$i] * $weight;
+    $remainder = $sum % 11;
+    $second = $remainder < 2 ? 0 : 11 - $remainder;
+    return $values[13] === $second;
+}
+
+function brasilApiGet(string $endpoint): array
+{
+    $url = 'https://brasilapi.com.br/api/' . ltrim($endpoint, '/');
+    $body = false;
+    $status = 0;
+
+    if (function_exists('curl_init')) {
+        $curl = curl_init($url);
+        curl_setopt_array($curl, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 4,
+            CURLOPT_TIMEOUT => 8,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_HTTPHEADER => ['Accept: application/json', 'User-Agent: GastroMatch/1.0'],
+        ]);
+        $body = curl_exec($curl);
+        $status = (int)curl_getinfo($curl, CURLINFO_HTTP_CODE);
+        curl_close($curl);
+    } else {
+        $context = stream_context_create(['http' => [
+            'method' => 'GET',
+            'header' => "Accept: application/json\r\nUser-Agent: GastroMatch/1.0\r\n",
+            'timeout' => 8,
+            'ignore_errors' => true,
+        ], 'ssl' => ['verify_peer' => true, 'verify_peer_name' => true]]);
+        $body = @file_get_contents($url, false, $context);
+        foreach (($http_response_header ?? []) as $header) {
+            if (preg_match('/^HTTP\/\S+\s+(\d{3})/', $header, $match)) $status = (int)$match[1];
+        }
+    }
+
+    $data = is_string($body) ? json_decode($body, true) : null;
+    return ['status' => $status, 'data' => is_array($data) ? $data : null, 'transport_ok' => $body !== false];
+}
+
+function consultarBrasilApiCnpj(string $cnpj): array
+{
+    $resultado = brasilApiGet('cnpj/v1/' . rawurlencode($cnpj));
+    if ($resultado['status'] === 200 && is_array($resultado['data'])) {
+        $data = $resultado['data'];
+        $cnpjRetornado = strtoupper(preg_replace('/[^A-Z0-9]+/i', '', (string)($data['cnpj'] ?? $cnpj)));
+        if ($cnpjRetornado !== $cnpj) return ['status' => 'nao_encontrado', 'data' => null];
+        $situacao = strtoupper((string)($data['descricao_situacao_cadastral'] ?? ''));
+        return ['status' => $situacao === 'ATIVA' ? 'ativo' : 'inativo', 'data' => $data];
+    }
+    if ($resultado['status'] === 404) return ['status' => 'nao_encontrado', 'data' => null];
+    if (in_array($resultado['status'], [400, 422], true)) return ['status' => 'invalido', 'data' => null];
+    return ['status' => 'indisponivel', 'data' => null];
+}
+
+function consultarBrasilApiCep(string $cep): array
+{
+    $resultado = brasilApiGet('cep/v1/' . rawurlencode($cep));
+    if ($resultado['status'] === 200 && is_array($resultado['data'])) {
+        return ['status' => 'encontrado', 'data' => $resultado['data']];
+    }
+    if ($resultado['status'] === 404) return ['status' => 'nao_encontrado', 'data' => null];
+    return ['status' => 'indisponivel', 'data' => null];
 }
 
 function cpfHasValidChecksum(string $cpf): bool
@@ -247,13 +327,53 @@ if ($action === 'status') {
     jsonReply(true, 'API do GastroMatch conectada ao MySQL.', ['database' => $dbName]);
 }
 
+if ($action === 'consultar_cep') {
+    $cep = preg_replace('/\D+/', '', (string)($_GET['cep'] ?? ''));
+    if (strlen($cep) !== 8) jsonReply(false, 'Informe um CEP com 8 dígitos.', null, 400);
+    $consulta = consultarBrasilApiCep($cep);
+    if ($consulta['status'] === 'encontrado') {
+        $endereco = $consulta['data'];
+        jsonReply(true, 'CEP consultado.', [
+            'source' => 'brasilapi', 'cep' => $cep,
+            'logradouro' => (string)($endereco['street'] ?? ''),
+            'bairro' => (string)($endereco['neighborhood'] ?? ''),
+            'cidade' => (string)($endereco['city'] ?? ''),
+            'estado' => strtoupper((string)($endereco['state'] ?? '')),
+        ]);
+    }
+    if ($consulta['status'] === 'nao_encontrado') jsonReply(false, 'CEP não encontrado. Você pode preencher o endereço manualmente.', ['fallback' => true], 404);
+    jsonReply(false, 'BrasilAPI indisponível no momento. Você pode preencher o endereço manualmente.', ['fallback' => true], 503);
+}
+
+if ($action === 'consultar_cnpj') {
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') jsonReply(false, 'Método não permitido.', null, 405);
+    $input = json_decode(file_get_contents('php://input'), true) ?? [];
+    $cnpj = strtoupper(preg_replace('/[^A-Z0-9]+/i', '', (string)($input['cnpj'] ?? '')));
+    if (!cnpjHasValidFormat($cnpj)) jsonReply(false, 'CNPJ inválido. Confira os 14 caracteres e os dígitos verificadores.', null, 400);
+    $consulta = consultarBrasilApiCnpj($cnpj);
+    if ($consulta['status'] === 'nao_encontrado') jsonReply(false, 'CNPJ não encontrado na consulta pública da BrasilAPI.', ['status' => 'nao_encontrado'], 404);
+    if ($consulta['status'] === 'invalido') jsonReply(false, 'A BrasilAPI rejeitou o formato do CNPJ.', ['status' => 'invalido'], 400);
+    if ($consulta['status'] === 'indisponivel') jsonReply(false, 'Consulta externa indisponível. A solicitação poderá seguir para análise manual.', ['status' => 'indisponivel', 'fallback' => true], 503);
+    $data = $consulta['data'];
+    jsonReply(true, $consulta['status'] === 'ativo' ? 'CNPJ encontrado e com situação ativa.' : 'CNPJ encontrado, mas a situação cadastral não está ativa.', [
+        'status' => $consulta['status'],
+        'cnpj' => $cnpj,
+        'razao_social' => (string)($data['razao_social'] ?? ''),
+        'nome_fantasia' => (string)($data['nome_fantasia'] ?? ''),
+        'situacao' => (string)($data['descricao_situacao_cadastral'] ?? 'Não informada'),
+        'cidade' => (string)($data['municipio'] ?? ''),
+        'estado' => strtoupper((string)($data['uf'] ?? '')),
+        'cnae_principal' => (string)($data['cnae_fiscal_descricao'] ?? ''),
+    ], $consulta['status'] === 'ativo' ? 200 : 422);
+}
+
 if ($action === 'register') {
     $input = json_decode(file_get_contents('php://input'), true) ?? [];
     $nome = trim((string)($input['nome'] ?? ''));
     $email = strtolower(trim((string)($input['email'] ?? '')));
     $senha = (string)($input['password'] ?? '');
     $tipo = strtolower(trim((string)($input['tipo_usuario'] ?? 'cliente')));
-    $cnpj = preg_replace('/\D+/', '', (string)($input['cnpj'] ?? ''));
+    $cnpj = strtoupper(preg_replace('/[^A-Z0-9]+/i', '', (string)($input['cnpj'] ?? '')));
     $empresa = trim((string)($input['empresa'] ?? ''));
     $relatoProfissional = trim((string)($input['relato_profissional'] ?? ''));
     $linkEvidencia = trim((string)($input['link_evidencia'] ?? ''));
@@ -274,11 +394,27 @@ if ($action === 'register') {
     }
 
     if (in_array($tipo, ['chef', 'restaurante'], true) && $cnpj === '') {
-        jsonReply(false, 'Chef e restaurante devem informar um CNPJ com 14 dígitos.', null, 400);
+        jsonReply(false, 'Chef e restaurante devem informar um CNPJ com 14 caracteres.', null, 400);
     }
 
-    if (in_array($tipo, ['chef', 'restaurante'], true) && !cnpjHasValidFormat($cnpj)) {
-        jsonReply(false, 'Informe um CNPJ com 14 dígitos.', null, 400);
+    $consultaCnpj = ['status' => 'nao_aplicavel', 'data' => null];
+    if (in_array($tipo, ['chef', 'restaurante'], true)) {
+        if (!cnpjHasValidFormat($cnpj)) {
+            jsonReply(false, 'Informe um CNPJ válido, numérico ou alfanumérico, com 14 caracteres e verificadores corretos.', null, 400);
+        }
+        $consultaCnpj = consultarBrasilApiCnpj($cnpj);
+        if ($consultaCnpj['status'] === 'nao_encontrado') {
+            jsonReply(false, 'Este CNPJ não foi localizado na consulta pública. Confira os dados antes de continuar.', null, 422);
+        }
+        if ($consultaCnpj['status'] === 'invalido') {
+            jsonReply(false, 'A BrasilAPI recusou o CNPJ informado.', null, 422);
+        }
+        if ($consultaCnpj['status'] === 'inativo') {
+            jsonReply(false, 'O CNPJ foi localizado, mas sua situação cadastral não está ativa. A conta não foi criada.', [
+                'cnpj_status' => 'inativo',
+                'situacao' => (string)($consultaCnpj['data']['descricao_situacao_cadastral'] ?? 'Não ativa'),
+            ], 422);
+        }
     }
 
     if (in_array($tipo, ['chef', 'restaurante'], true)
@@ -300,48 +436,63 @@ if ($action === 'register') {
     $emailVerificado = $verificacao2fa === 0 ? 1 : 0;
     $codigoVerificacao = $verificacao2fa === 1 ? str_pad((string)random_int(100000, 999999), 6, '0', STR_PAD_LEFT) : null;
 
-    $insert = $pdo->prepare('INSERT INTO usuarios (nome, email, senha_hash, codigo_acesso, tipo_usuario, telefone, foto_perfil, data_cadastro, email_verificado, email_verificacao_codigo, verificacao_2fa, cnpj, cnpj_validado, ativo)
-        VALUES (:nome, :email, :senha_hash, :codigo_acesso, :tipo_usuario, :telefone, :foto_perfil, NOW(), :email_verificado, :email_verificacao_codigo, :verificacao_2fa, :cnpj, :cnpj_validado, :ativo)');
-    $insert->execute([
-        ':nome' => $nome,
-        ':email' => $email,
-        ':senha_hash' => $hash,
-        ':codigo_acesso' => $codigo,
-        ':tipo_usuario' => $tipo,
-        ':telefone' => '',
-        ':foto_perfil' => '',
-        ':email_verificado' => $emailVerificado,
-        ':email_verificacao_codigo' => $codigoVerificacao,
-        ':verificacao_2fa' => $verificacao2fa,
-        ':cnpj' => in_array($tipo, ['chef', 'restaurante'], true) ? $cnpj : null,
-        ':cnpj_validado' => 0,
-        ':ativo' => 1,
-    ]);
+    $insert = $pdo->prepare('INSERT INTO usuarios (nome, email, senha_hash, codigo_acesso, tipo_usuario, telefone, foto_perfil, data_cadastro, email_verificado, email_verificacao_codigo, verificacao_2fa, cnpj, cnpj_validado, cnpj_validado_em, ativo)
+        VALUES (:nome, :email, :senha_hash, :codigo_acesso, :tipo_usuario, :telefone, :foto_perfil, NOW(), :email_verificado, :email_verificacao_codigo, :verificacao_2fa, :cnpj, :cnpj_validado, :cnpj_validado_em, :ativo)');
 
-    $idUsuario = (int)$pdo->lastInsertId();
+    try {
+        $pdo->beginTransaction();
+        $insert->execute([
+            ':nome' => $nome,
+            ':email' => $email,
+            ':senha_hash' => $hash,
+            ':codigo_acesso' => $codigo,
+            ':tipo_usuario' => $tipo,
+            ':telefone' => '',
+            ':foto_perfil' => '',
+            ':email_verificado' => $emailVerificado,
+            ':email_verificacao_codigo' => $codigoVerificacao,
+            ':verificacao_2fa' => $verificacao2fa,
+            ':cnpj' => in_array($tipo, ['chef', 'restaurante'], true) ? $cnpj : null,
+            ':cnpj_validado' => $consultaCnpj['status'] === 'ativo' ? 1 : 0,
+            ':cnpj_validado_em' => $consultaCnpj['status'] === 'ativo' ? date('Y-m-d H:i:s') : null,
+            ':ativo' => 1,
+        ]);
+
+        $idUsuario = (int)$pdo->lastInsertId();
+
+        if (in_array($tipo, ['chef', 'restaurante'], true)) {
+            $pdo->prepare('INSERT INTO perfis_criadores (id_usuario, biografia, link_portfolio, status_validacao)
+                VALUES (:id_usuario, :biografia, :link_portfolio, :status_validacao)')
+                ->execute([
+                    ':id_usuario' => $idUsuario,
+                    ':biografia' => 'Perfil em análise na plataforma.',
+                    ':link_portfolio' => '',
+                    ':status_validacao' => 'pendente',
+                ]);
+            $dadosCnpj = $consultaCnpj['data'] ?? [];
+            $pdo->prepare('INSERT INTO verificacoes_criadores
+                (id_usuario, empresa, cnpj, relato_profissional, link_evidencia, cnpj_status_consulta, cnpj_razao_social, cnpj_nome_fantasia, cnpj_consultado_em)
+                VALUES (:id_usuario, :empresa, :cnpj, :relato, :link, :cnpj_status, :razao_social, :nome_fantasia, :consultado_em)')
+                ->execute([
+                    ':id_usuario' => $idUsuario,
+                    ':empresa' => $empresa,
+                    ':cnpj' => $cnpj,
+                    ':relato' => $relatoProfissional,
+                    ':link' => $linkEvidencia !== '' ? $linkEvidencia : null,
+                    ':cnpj_status' => $consultaCnpj['status'],
+                    ':razao_social' => $dadosCnpj['razao_social'] ?? null,
+                    ':nome_fantasia' => $dadosCnpj['nome_fantasia'] ?? null,
+                    ':consultado_em' => $consultaCnpj['status'] === 'ativo' ? date('Y-m-d H:i:s') : null,
+                ]);
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        jsonReply(false, 'Não foi possível concluir o cadastro. Confira se a migração BrasilAPI foi aplicada e tente novamente.', null, 500);
+    }
 
     if ($verificacao2fa === 0) {
         iniciarSessaoUsuario($idUsuario);
-    }
-
-    if (in_array($tipo, ['chef', 'restaurante'], true)) {
-        $pdo->prepare('INSERT INTO perfis_criadores (id_usuario, biografia, link_portfolio, status_validacao)
-            VALUES (:id_usuario, :biografia, :link_portfolio, :status_validacao)')
-            ->execute([
-                ':id_usuario' => $idUsuario,
-                ':biografia' => 'Perfil em análise na plataforma.',
-                ':link_portfolio' => '',
-                ':status_validacao' => 'pendente',
-            ]);
-        $pdo->prepare('INSERT INTO verificacoes_criadores (id_usuario, empresa, cnpj, relato_profissional, link_evidencia)
-            VALUES (:id_usuario, :empresa, :cnpj, :relato, :link)')
-            ->execute([
-                ':id_usuario' => $idUsuario,
-                ':empresa' => $empresa,
-                ':cnpj' => $cnpj,
-                ':relato' => $relatoProfissional,
-                ':link' => $linkEvidencia !== '' ? $linkEvidencia : null,
-            ]);
     }
 
     $responseData = ['user' => [
@@ -643,6 +794,7 @@ if ($action === 'verificacoes_criadores') {
 
     $stmt = $pdo->query('SELECT v.id_verificacao, v.id_usuario, v.empresa, v.cnpj, v.relato_profissional,
             v.link_evidencia, v.status, v.parecer_revisor, v.criado_em, v.analisado_em,
+            v.cnpj_status_consulta, v.cnpj_razao_social, v.cnpj_nome_fantasia, v.cnpj_consultado_em,
             u.nome, u.email, u.tipo_usuario
         FROM verificacoes_criadores v
         INNER JOIN usuarios u ON u.id_usuario = v.id_usuario
@@ -661,13 +813,18 @@ if ($action === 'reenviar_verificacao') {
 
     $input = json_decode(file_get_contents('php://input'), true) ?? [];
     $empresa = trim((string)($input['empresa'] ?? ''));
-    $cnpj = preg_replace('/\D+/', '', (string)($input['cnpj'] ?? ''));
+    $cnpj = strtoupper(preg_replace('/[^A-Z0-9]+/i', '', (string)($input['cnpj'] ?? '')));
     $relato = trim((string)($input['relato_profissional'] ?? ''));
     $link = trim((string)($input['link_evidencia'] ?? ''));
     if ($empresa === '' || strlen($empresa) > 150 || !cnpjHasValidFormat($cnpj)
         || mb_strlen($relato) < 40 || mb_strlen($relato) > 3000 || strlen($link) > 500 || !evidenceUrlIsValid($link)) {
         jsonReply(false, 'Revise empresa, CNPJ, relato profissional e link de evidência.', null, 400);
     }
+    $consultaCnpj = consultarBrasilApiCnpj($cnpj);
+    if (in_array($consultaCnpj['status'], ['nao_encontrado', 'invalido', 'inativo'], true)) {
+        jsonReply(false, 'O CNPJ não foi localizado ou não está ativo. Confira os dados antes de reenviar.', null, 422);
+    }
+    $dadosCnpj = $consultaCnpj['data'] ?? [];
 
     try {
         $pdo->beginTransaction();
@@ -681,6 +838,8 @@ if ($action === 'reenviar_verificacao') {
 
         $pdo->prepare('UPDATE verificacoes_criadores SET empresa = :empresa, cnpj = :cnpj,
                 relato_profissional = :relato, link_evidencia = :link, status = "pendente",
+                cnpj_status_consulta = :cnpj_status, cnpj_razao_social = :razao_social,
+                cnpj_nome_fantasia = :nome_fantasia, cnpj_consultado_em = :consultado_em,
                 parecer_revisor = NULL, revisado_por = NULL, analisado_em = NULL
             WHERE id_usuario = :id')
             ->execute([
@@ -688,12 +847,16 @@ if ($action === 'reenviar_verificacao') {
                 ':cnpj' => $cnpj,
                 ':relato' => $relato,
                 ':link' => $link !== '' ? $link : null,
+                ':cnpj_status' => $consultaCnpj['status'],
+                ':razao_social' => $dadosCnpj['razao_social'] ?? null,
+                ':nome_fantasia' => $dadosCnpj['nome_fantasia'] ?? null,
+                ':consultado_em' => $consultaCnpj['status'] === 'ativo' ? date('Y-m-d H:i:s') : null,
                 ':id' => (int)$usuario['id_usuario'],
             ]);
         $pdo->prepare('UPDATE perfis_criadores SET status_validacao = "pendente" WHERE id_usuario = :id')
             ->execute([':id' => (int)$usuario['id_usuario']]);
-        $pdo->prepare('UPDATE usuarios SET cnpj = :cnpj, cnpj_validado = 0, cnpj_validado_em = NULL WHERE id_usuario = :id')
-            ->execute([':cnpj' => $cnpj, ':id' => (int)$usuario['id_usuario']]);
+        $pdo->prepare('UPDATE usuarios SET cnpj = :cnpj, cnpj_validado = :validado, cnpj_validado_em = :consultado_em WHERE id_usuario = :id')
+            ->execute([':cnpj' => $cnpj, ':validado' => $consultaCnpj['status'] === 'ativo' ? 1 : 0, ':consultado_em' => $consultaCnpj['status'] === 'ativo' ? date('Y-m-d H:i:s') : null, ':id' => (int)$usuario['id_usuario']]);
         $pdo->commit();
         jsonReply(true, 'Evidências reenviadas para análise.', ['status' => 'pendente']);
     } catch (Throwable $e) {
@@ -741,12 +904,7 @@ if ($action === 'revisar_criador') {
             ]);
         $pdo->prepare('UPDATE perfis_criadores SET status_validacao = :status WHERE id_usuario = :id')
             ->execute([':status' => $decisao, ':id' => $idUsuario]);
-        $pdo->prepare('UPDATE usuarios SET cnpj_validado = :validado, cnpj_validado_em = IF(:validado_data = 1, NOW(), NULL) WHERE id_usuario = :id')
-            ->execute([
-                ':validado' => $decisao === 'aprovado' ? 1 : 0,
-                ':validado_data' => $decisao === 'aprovado' ? 1 : 0,
-                ':id' => $idUsuario,
-            ]);
+        // cnpj_validado registra somente a consulta automática; aprovação humana do perfil é independente.
         $pdo->commit();
 
         jsonReply(true, $decisao === 'aprovado' ? 'Criador aprovado.' : 'Solicitação reprovada.', ['status' => $decisao]);
@@ -1240,6 +1398,112 @@ if ($action === 'simular_pagamento_pix') {
             $pdo->rollBack();
         }
         jsonReply(false, 'Não foi possível confirmar a simulação Pix.', null, 500);
+    }
+}
+
+if ($action === 'pedido_rastreio') {
+    $usuario = currentDatabaseUser($pdo);
+    if (!$usuario) {
+        jsonReply(false, 'Entre na sua conta para rastrear um pedido.', null, 401);
+    }
+    $idUsuario = (int)$usuario['id_usuario'];
+    $idPedido = (int)($_GET['id'] ?? 0);
+
+    $sql = 'SELECT o.id_pedido, o.valor_total, o.status_pedido, o.status_entrega, o.data_pedido,
+            (SELECT pg.metodo FROM pagamentos pg WHERE pg.id_pedido = o.id_pedido ORDER BY pg.id_pagamento DESC LIMIT 1) AS metodo_pagamento,
+            (SELECT pg.link_pagamento FROM pagamentos pg WHERE pg.id_pedido = o.id_pedido AND pg.metodo = "pix" AND pg.status = "pendente" ORDER BY pg.id_pagamento DESC LIMIT 1) AS link_pagamento
+        FROM pedidos o
+        WHERE o.id_cliente = :usuario AND o.status_pedido <> "cancelado"';
+    $params = [':usuario' => $idUsuario];
+    if ($idPedido > 0) {
+        $sql .= ' AND o.id_pedido = :pedido';
+        $params[':pedido'] = $idPedido;
+    }
+    $sql .= ' ORDER BY o.id_pedido DESC LIMIT 1';
+
+    try {
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $pedido = $stmt->fetch();
+    } catch (Throwable $e) {
+        jsonReply(false, 'Não foi possível consultar o pedido.', null, 500);
+    }
+    if (!$pedido) {
+        jsonReply(false, 'Você ainda não fez nenhum pedido.', null, 404);
+    }
+
+    jsonReply(true, 'Pedido carregado.', [
+        'id_pedido' => (int)$pedido['id_pedido'],
+        'valor_total' => (float)$pedido['valor_total'],
+        'status_pedido' => $pedido['status_pedido'],
+        'status_entrega' => $pedido['status_entrega'],
+        'entregue' => $pedido['status_entrega'] === 'entregue',
+        'metodo_pagamento' => $pedido['metodo_pagamento'],
+        'link_pagamento' => $pedido['status_pedido'] === 'pendente' ? $pedido['link_pagamento'] : null,
+        'data_pedido' => $pedido['data_pedido'],
+    ]);
+}
+
+if ($action === 'pedido_entrega') {
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        jsonReply(false, 'Método não permitido.', null, 405);
+    }
+    $usuario = currentDatabaseUser($pdo);
+    if (!$usuario) {
+        jsonReply(false, 'Entre na sua conta para salvar o andamento da entrega.', null, 401);
+    }
+    $input = json_decode(file_get_contents('php://input'), true) ?? [];
+    $idPedido = (int)($input['id_pedido'] ?? 0);
+    $novoStatus = (string)($input['status_entrega'] ?? '');
+    $ordemEntrega = ['aguardando_separacao' => 0, 'preparando' => 1, 'enviado' => 2, 'entregue' => 3];
+
+    if ($idPedido < 1 || !isset($ordemEntrega[$novoStatus]) || $novoStatus === 'aguardando_separacao') {
+        jsonReply(false, 'Informe o pedido e um status de entrega válido.', null, 400);
+    }
+
+    try {
+        $pdo->beginTransaction();
+        $stmt = $pdo->prepare('SELECT status_pedido, status_entrega, TIMESTAMPDIFF(SECOND, data_pedido, NOW()) AS segundos
+            FROM pedidos
+            WHERE id_pedido = :pedido AND id_cliente = :usuario
+            LIMIT 1 FOR UPDATE');
+        $stmt->execute([':pedido' => $idPedido, ':usuario' => (int)$usuario['id_usuario']]);
+        $pedido = $stmt->fetch();
+
+        if (!$pedido) {
+            $pdo->rollBack();
+            jsonReply(false, 'Pedido não encontrado.', null, 404);
+        }
+        // Só pedidos confirmados (Pix pago ou dinheiro na entrega) podem avançar na entrega.
+        if ($pedido['status_pedido'] !== 'confirmado' || $pedido['status_entrega'] === 'cancelado') {
+            $pdo->rollBack();
+            jsonReply(false, 'Este pedido ainda não pode ter a entrega atualizada.', null, 409);
+        }
+
+        $statusAtual = (string)$pedido['status_entrega'];
+        // O andamento só avança: pedir um status igual ou anterior não altera nada (e não é erro).
+        if ($ordemEntrega[$novoStatus] > ($ordemEntrega[$statusAtual] ?? 0)) {
+            // Proteção básica da simulação: a entrega não pode ser concluída logo após a compra.
+            if ($novoStatus === 'entregue' && (int)$pedido['segundos'] < 30) {
+                $pdo->rollBack();
+                jsonReply(false, 'A entrega simulada ainda está em andamento.', null, 409);
+            }
+            $pdo->prepare('UPDATE pedidos SET status_entrega = :status WHERE id_pedido = :pedido')
+                ->execute([':status' => $novoStatus, ':pedido' => $idPedido]);
+            $statusAtual = $novoStatus;
+        }
+        $pdo->commit();
+
+        jsonReply(true, 'Andamento da entrega salvo.', [
+            'id_pedido' => $idPedido,
+            'status_entrega' => $statusAtual,
+            'entregue' => $statusAtual === 'entregue',
+        ]);
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        jsonReply(false, 'Não foi possível salvar o andamento da entrega.', null, 500);
     }
 }
 

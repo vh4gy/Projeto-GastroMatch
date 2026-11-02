@@ -191,6 +191,8 @@ button{cursor:pointer}
   padding:11px 12px;font:500 .9rem var(--texto-font)
 }
 .campo textarea{resize:vertical;min-height:115px}
+.campo-ajuda{display:block;margin-top:2px;color:var(--muted);font:500 .73rem/1.5 var(--texto-font);text-transform:none;letter-spacing:normal}.campo-ajuda.sucesso{color:#287447}.campo-ajuda.aviso{color:#98611b}.campo-ajuda.erro{color:#b43737}.endereco-manual-btn{align-self:flex-start;border:0;background:transparent;color:var(--verde);font:700 .72rem var(--texto-font);text-decoration:underline;padding:0;cursor:pointer}.endereco-manual-btn:hover{color:var(--laranja)}
+
 .campo input:focus,.campo select:focus,.campo textarea:focus{border-color:var(--laranja);outline:none;box-shadow:0 0 0 3px rgba(242,138,24,.1)}
 .sem-resultado{padding:45px;text-align:center;color:var(--muted);background:#fff;border-radius:18px}
 .card-receita[hidden]{display:none}
@@ -198,7 +200,7 @@ button{cursor:pointer}
 /* ---------- perto ---------- */
 .local-box{
   display:flex;gap:18px;align-items:center;padding:23px;border-radius:20px;background:var(--verde-claro);
-  border:1px solid #cfdfd3;margin-bottom:22px
+  border:1px solid #cfdfd3;margin-bottom:26px
 }
 .local-icone{width:48px;height:48px;border-radius:15px;display:grid;place-items:center;background:#fff;color:var(--verde);font-size:1.45rem}
 .local-box h3{font:700 1.2rem var(--titulo);margin-bottom:5px}
@@ -220,19 +222,20 @@ button{cursor:pointer}
 .pill,.status-validacao{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border-radius:999px;background:#fff;border:1px solid var(--linha);font:700 .68rem var(--texto-font);text-transform:uppercase;letter-spacing:.06em;margin-bottom:7px}
 .status-validacao{color:var(--verde)}
 .status-validacao small{font-weight:500;color:var(--muted);text-transform:none;letter-spacing:0}
-.mapa-container{display:grid;grid-template-columns:1.5fr .9fr;gap:16px;align-items:stretch;margin-top:18px}
-.mapa-localizacao{width:100%;height:360px;border-radius:22px;border:1px solid var(--linha);background:linear-gradient(135deg,#eef7ff,#f7f4ef);overflow:hidden}
-.mapa-rastreio{height:420px}
-.mapa-fallback{padding:18px;border:1px solid var(--linha);border-radius:22px;background:var(--paper);box-shadow:var(--sombra-leve)}
+.mapa-container{--mapa-altura:clamp(480px,70vh,680px);display:grid;grid-template-columns:minmax(0,1.7fr) minmax(310px,.8fr);gap:22px;align-items:start;margin-top:24px}
+.mapa-container+.grade{margin-top:34px}
+.mapa-localizacao{width:100%;height:var(--mapa-altura,clamp(440px,64vh,620px));border-radius:22px;border:1px solid var(--linha);background:linear-gradient(135deg,#eef7ff,#f7f4ef);overflow:hidden}
+.mapa-rastreio{height:clamp(460px,66vh,640px)}
+.mapa-fallback{display:flex;flex-direction:column;height:var(--mapa-altura);padding:22px;border:1px solid var(--linha);border-radius:22px;background:var(--paper);box-shadow:var(--sombra-leve)}
 .mapa-fallback strong{display:block;margin-bottom:12px;font:700 1.05rem var(--titulo)}
-.lista-restaurantes{display:grid;gap:10px}
-.restaurante-card{padding:12px 14px;border:1px solid var(--linha);border-radius:14px;background:#fff;display:flex;justify-content:space-between;align-items:center;gap:12px}
+.lista-restaurantes{display:grid;gap:12px;align-content:start;flex:1;min-height:0;overflow-y:auto;padding-right:4px}
+.restaurante-card{padding:14px 16px;border:1px solid var(--linha);border-radius:14px;background:#fff;display:flex;justify-content:space-between;align-items:center;gap:12px}
 .restaurante-card h3{font:700 1rem var(--titulo);margin:6px 0 0}
 .restaurante-meta{display:flex;flex-direction:column;align-items:flex-end;gap:4px;color:var(--muted);font-size:.76rem}
 .restaurante-meta strong{color:var(--verde);font-size:.92rem}
 .mapa-vazio{height:100%;display:grid;place-items:center;text-align:center;padding:20px;color:var(--muted)}
-.rastreio-layout{display:grid;grid-template-columns:1.5fr .8fr;gap:20px;align-items:start}
-.rastreio-card{padding:18px;border:1px solid var(--linha);border-radius:20px;background:var(--paper);box-shadow:var(--sombra-leve)}
+.rastreio-layout{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(280px,.8fr);gap:24px;align-items:start}
+.rastreio-card{padding:22px;border:1px solid var(--linha);border-radius:20px;background:var(--paper);box-shadow:var(--sombra-leve)}
 .rastreio-header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px}
 .rastreio-header h3{font:700 1.4rem var(--titulo);margin:4px 0 0}
 .status-entrega{display:inline-flex;align-items:center;padding:7px 12px;border-radius:999px;background:#eaf8ee;color:var(--verde);font:700 .7rem var(--texto-font);text-transform:uppercase;letter-spacing:.06em}
@@ -511,3 +514,82 @@ button{cursor:pointer}
 #menu .link-login{padding:9px 14px;border-radius:999px;background:var(--verde);color:#fff;font-weight:700}
 #menu .link-login:hover{filter:brightness(.95)}
 @media(max-width:760px){#menu .link-login{padding:7px 10px}}
+
+/* ---------- mapa: marcadores, raio de entrega e rastreio ---------- */
+.marcador{display:grid;place-items:center;border-radius:50%;border:2px solid #fff;box-shadow:0 4px 12px rgba(0,0,0,.28);line-height:1;cursor:pointer}
+.marcador-rest{width:32px;height:32px;background:var(--verde);font-size:16px;transition:background .2s,opacity .2s}
+.marcador-rest.fora{background:#9aa0a6;opacity:.7}
+.marcador-casa{width:36px;height:36px;background:var(--laranja);font-size:18px}
+.marcador-entregador{width:40px;height:40px;background:#2b6cb0;font-size:20px}
+.raio-controle{flex-shrink:0;margin:0 0 16px;padding:12px 14px;border:1px solid var(--linha);border-radius:14px;background:#fff}
+.raio-controle label{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:.82rem;font-weight:700}
+.raio-controle label strong{margin:0;color:var(--verde);font:700 .9rem var(--titulo)}
+.raio-controle input[type=range]{width:100%;accent-color:var(--verde)}
+.sem-restaurantes{padding:12px;color:var(--muted);font-size:.85rem;line-height:1.5}
+.aviso-demo-mapa{margin-top:12px;color:var(--muted);font-size:.74rem;line-height:1.5}
+.rastreio-acoes{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
+@media (max-width:1040px){.mapa-container,.rastreio-layout{grid-template-columns:1fr}.mapa-container{--mapa-altura:clamp(380px,56vh,520px)}.mapa-fallback{height:auto}.lista-restaurantes{overflow:visible}}
+@media (max-width:760px){.mapa-container{--mapa-altura:340px}.mapa-rastreio{height:360px}.mapa-fallback,.rastreio-card{padding:16px}}
+
+/* ---------- rastreio do pedido (tela dedicada) ---------- */
+.rt-layout{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(300px,.8fr);gap:24px;align-items:start}
+.rt-mapa-card{padding:22px;border:1px solid var(--linha);border-radius:26px;background:var(--paper);box-shadow:var(--sombra-leve)}
+.rt-mapa-topo{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px}
+.rt-mapa-topo h3{font:700 1.5rem var(--titulo);margin:4px 0 0}
+.rt-mapa-topo h3 small{margin-left:8px;color:var(--muted);font:600 .68rem var(--texto-font);letter-spacing:.08em;text-transform:uppercase}
+.rt-mapa-wrap{position:relative;border-radius:22px;overflow:hidden}
+.rt-mapa-wrap .mapa-rastreio{height:clamp(460px,64vh,620px);border-radius:22px}
+.rt-barra{height:8px;margin:18px 0 10px;border-radius:99px;background:#ece4da;overflow:hidden}
+.rt-barra-fill{width:0;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--verde),#4fa56d);transition:width .25s linear}
+.rt-legenda{display:flex;justify-content:space-between;gap:10px;color:var(--muted);font-size:.8rem;font-weight:600}
+.rt-legenda span:nth-child(2){color:var(--verde);font-weight:700}
+.rt-lateral{display:grid;gap:16px}
+.rt-eta{padding:22px 24px;border-radius:24px;color:#fff;background:linear-gradient(135deg,var(--verde),#3a8f5d 70%,#4fa56d);box-shadow:var(--sombra-leve)}
+.rt-eta span{font:700 .72rem var(--texto-font);letter-spacing:.12em;text-transform:uppercase;opacity:.85}
+.rt-eta strong{display:block;margin:6px 0 4px;font:700 3rem/1 var(--titulo);letter-spacing:-.03em}
+.rt-eta small{font-size:.86rem;opacity:.92}
+.rt-passos{list-style:none;margin:0;padding:22px;border:1px solid var(--linha);border-radius:24px;background:var(--paper);box-shadow:var(--sombra-leve)}
+.rt-passo{position:relative;display:grid;grid-template-columns:28px 1fr;gap:14px;padding-bottom:20px}
+.rt-passo:last-child{padding-bottom:0}
+.rt-passo::before{content:"";position:absolute;left:13px;top:30px;bottom:2px;width:2px;background:var(--linha)}
+.rt-passo:last-child::before{display:none}
+.rt-passo.feito::before{background:var(--verde)}
+.rt-bolinha{z-index:1;width:28px;height:28px;display:grid;place-items:center;border:2px solid var(--linha);border-radius:50%;background:#fff;color:transparent;font-size:.8rem;font-weight:700;transition:background .25s,border-color .25s,color .25s}
+.rt-passo.feito .rt-bolinha{background:var(--verde);border-color:var(--verde);color:#fff}
+.rt-passo.atual .rt-bolinha{border-color:var(--laranja);background:#fff4e3;animation:rtPulso 1.6s ease-in-out infinite}
+.rt-passo strong{display:block;font:700 .95rem var(--titulo)}
+.rt-passo small{color:var(--muted);font-size:.78rem}
+.rt-passo:not(.feito):not(.atual) strong{color:#a29a90}
+.rt-entregador{display:flex;align-items:center;gap:14px;padding:16px 18px;border:1px solid var(--linha);border-radius:22px;background:var(--paper);box-shadow:var(--sombra-leve)}
+.rt-entregador-avatar{flex:none;width:50px;height:50px;display:grid;place-items:center;border-radius:50%;background:linear-gradient(135deg,var(--laranja),#ffb65a);color:#fff;font:700 1.1rem var(--titulo)}
+.rt-entregador strong{display:block;font:700 1rem var(--titulo)}
+.rt-entregador small{color:var(--muted)}
+.rt-resumo{padding:8px 20px;border:1px solid var(--linha);border-radius:22px;background:var(--paper);box-shadow:var(--sombra-leve)}
+.rt-linha{display:flex;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px dashed var(--linha);font-size:.86rem}
+.rt-linha:last-child{border-bottom:0}
+.rt-linha span{color:var(--muted)}
+.rt-linha strong{text-align:right}
+.rt-acoes{display:grid;gap:10px}
+.rt-acoes .btn{width:100%}
+.rt-entregue{position:absolute;left:16px;right:16px;bottom:16px;display:flex;align-items:center;gap:14px;padding:16px 18px;border-radius:18px;background:rgba(255,255,255,.97);box-shadow:0 14px 34px rgba(0,0,0,.22);animation:rtSobe .45s ease}
+.rt-entregue[hidden]{display:none}
+.rt-entregue>div{flex:1;min-width:0}
+.rt-entregue strong{display:block;font:700 1.05rem var(--titulo)}
+.rt-entregue small{color:var(--muted)}
+.rt-entregue-icone{flex:none;width:40px;height:40px;display:grid;place-items:center;border-radius:50%;background:var(--verde);color:#fff;font-size:1.2rem;font-weight:700}
+.rt-marker-moto{width:46px;height:46px}
+.rt-marker-moto::before{content:"";position:absolute;inset:-7px;border-radius:50%;border:2px solid rgba(43,108,176,.55);animation:rtOnda 1.8s ease-out infinite;pointer-events:none}
+.rt-moto-icone{width:46px;height:46px;display:grid;place-items:center;border:3px solid #fff;border-radius:50%;background:linear-gradient(135deg,#2b6cb0,#3b82d6);box-shadow:0 6px 16px rgba(20,50,100,.42)}
+.rt-moto-icone svg{transition:transform .15s}
+.rt-moto-icone.virado svg{transform:scaleX(-1)}
+.marcador-casa.pulsa::before{content:"";position:absolute;inset:-6px;border-radius:50%;border:2px solid rgba(242,138,24,.6);animation:rtOnda 2s ease-out infinite;pointer-events:none}
+@keyframes rtPulso{0%,100%{box-shadow:0 0 0 0 rgba(242,138,24,.35)}50%{box-shadow:0 0 0 7px rgba(242,138,24,0)}}
+@keyframes rtOnda{0%{transform:scale(.85);opacity:.9}100%{transform:scale(1.7);opacity:0}}
+@keyframes rtSobe{from{transform:translateY(14px);opacity:0}to{transform:none;opacity:1}}
+@media (max-width:1040px){.rt-layout{grid-template-columns:1fr}.rt-lateral{grid-template-columns:1fr 1fr}.rt-eta,.rt-passos{grid-column:auto}}
+@media (max-width:760px){.rt-lateral{grid-template-columns:1fr}.rt-mapa-card{padding:16px}.rt-mapa-wrap .mapa-rastreio{height:380px}.rt-entregue{flex-wrap:wrap}.rt-eta strong{font-size:2.5rem}}
+@media (prefers-reduced-motion:reduce){.rt-marker-moto::before,.marcador-casa.pulsa::before,.rt-passo.atual .rt-bolinha{animation:none}}
+#pixRastrear{margin-right:10px}
+
+/* o atributo hidden precisa vencer classes como .btn (display:inline-flex) */
+[hidden]{display:none!important}

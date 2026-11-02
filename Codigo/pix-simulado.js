@@ -62,6 +62,7 @@ async function loadPixSimulation() {
     pixElements.status.textContent = data.status === 'aprovado' ? 'Simulação confirmada' : 'Pendente';
     pixConfirmButton.hidden = data.status === 'aprovado';
     document.getElementById('pixVoltarInicio').hidden = data.status !== 'aprovado';
+    document.getElementById('pixRastrear').hidden = data.status !== 'aprovado';
     if (data.status === 'aprovado') renderReviewLinks(data.receitas);
     pixLoading.hidden = true;
     pixContent.hidden = false;
@@ -87,6 +88,7 @@ pixConfirmButton.addEventListener('click', async () => {
     pixMessage.textContent = payload.message;
     pixConfirmButton.hidden = true;
     document.getElementById('pixVoltarInicio').hidden = false;
+    document.getElementById('pixRastrear').hidden = false;
     renderReviewLinks(payload.data.receitas);
   } catch (error) {
     pixMessage.textContent = error.message || 'Não foi possível confirmar a simulação.';

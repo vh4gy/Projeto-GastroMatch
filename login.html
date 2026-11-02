@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Open+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="Estilo/login.css?v=20261030-1">
+  <link rel="stylesheet" href="Estilo/login.css?v=20261102-2">
 </head>
 <body>
   <main class="login-page">
@@ -99,8 +99,10 @@
             </label>
             <label class="campo campo-cnpj" id="campoCnpj" hidden>
               <span>CNPJ da empresa / perfil</span>
-              <input id="registroCnpj" type="text" inputmode="numeric" maxlength="18" placeholder="00.000.000/0000-00">
-              <small class="campo-ajuda">O CNPJ identifica a empresa, mas não aprova o perfil. A equipe fará a análise profissional.</small>
+              <input id="registroCnpj" type="text" inputmode="text" maxlength="18" autocomplete="off" autocapitalize="characters" placeholder="00.000.000/0000-00">
+              <small class="campo-ajuda">A consulta automática confere existência e situação cadastral. Isso não aprova o perfil: a equipe ainda fará a análise profissional.</small>
+              <button type="button" class="outline-btn cnpj-consulta-btn" id="consultarCnpjBtn">Consultar CNPJ</button>
+              <small id="cnpjConsultaMsg" class="campo-ajuda" role="status" aria-live="polite"></small>
             </label>
             <div id="camposVerificacaoChef" hidden>
               <label class="campo"><span>Empresa ou estabelecimento</span><input id="registroEmpresa" type="text" maxlength="150" placeholder="Nome da empresa"></label>
@@ -128,7 +130,8 @@
           <summary>Códigos de demonstração (sem e-mail ou senha)</summary>
           <div class="demo-lines">
             <button type="button" data-demo-role="cliente"><span>Cliente</span><code>GM-CLI-2026</code></button>
-            <button type="button" data-demo-role="chef"><span>Chef / Criador</span><code>GM-CHEF-2026</code></button>
+            <button type="button" data-demo-role="chef"><span>Chef aprovado</span><code>GM-CHEF-2026</code></button>
+            <button type="button" data-demo-role="chef" data-demo-code="GM-CHEF-TESTE-2026"><span>Chef pendente (teste de CNPJ)</span><code>GM-CHEF-TESTE-2026</code></button>
           </div>
           <small>Clique em um código ou digite-o para entrar sem preencher e-mail, nome de usuário ou senha. O login tradicional continua disponível.</small>
         </details>
@@ -137,6 +140,6 @@
       <footer>Projeto acadêmico • GastroMatch • Login demonstrativo</footer>
     </section>
   </main>
-  <script src="Codigo/login.js?v=20261102-1"></script>
+  <script src="Codigo/login.js?v=20261102-2"></script>
 </body>
 </html>
