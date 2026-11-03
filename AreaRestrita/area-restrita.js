@@ -142,11 +142,30 @@ function switchTo(view){
     tabelas:['Tabelas do banco','Campos, chaves e grupos do banco GastroMatch.'],
     relacoes:['Relações / cardinalidades','Como as tabelas se conectam no modelo lógico.'],
     verificacoes:['Verificações de criadores','Analise as evidências profissionais enviadas por chefs e restaurantes.'],
+    'gestao-receitas':['Receitas e estoque','Gerencie receitas publicadas e ajuste estoque de kits.'],
     receita:['Cadastrar receita','Formulário de entrada do conteúdo gastronômico do Chef/Criador.']
   };
   document.getElementById('pageTitle').textContent=meta[view][0];
   document.getElementById('pageSubtitle').textContent=meta[view][1];
   if(view==='verificacoes') renderVerificacoes();
+  if(view==='gestao-receitas') renderGestaoReceitas();
+}
+
+async function renderGestaoReceitas(){
+  const el=document.getElementById('view-gestao-receitas');
+  el.innerHTML='<div class="section-card">Carregando receitas do banco...</div>';
+  try{
+    const res=await fetch('../api.php?action=admin_receitas',{credentials:'same-origin',cache:'no-store'});
+    const payload=await res.json(); if(!res.ok||!payload.success) throw new Error(payload.message||'Falha ao listar receitas.');
+    el.innerHTML=`<div class="section-card"><div class="section-head"><div><span class="kicker">Banco de dados</span><h2>Receitas publicadas</h2></div></div><div class="admin-recipe-list">${payload.data.map(r=>`<article class="section-card admin-recipe" data-id="${Number(r.id_receita)}"><h3>#${Number(r.id_receita)} · ${esc(r.titulo)}</h3><label class="field"><span>Título</span><input class="adm-titulo" value="${esc(r.titulo)}" maxlength="150"></label><label class="field"><span>Acesso</span><select class="adm-acesso"><option value="gratuito" ${r.tipo_acesso==='gratuito'?'selected':''}>Gratuito</option><option value="exclusivo_pago" ${r.tipo_acesso==='exclusivo_pago'?'selected':''}>Exclusivo pago</option></select></label><label class="field"><span>Preço do conteúdo (R$)</span><input class="adm-preco" type="number" min="0" step="0.01" value="${Number(r.preco_conteudo||0)}"></label><button class="primary-btn adm-salvar">Salvar alterações</button><label class="field"><span>Preço do kit (R$)</span><input class="adm-preco-kit" type="number" min="0.01" step="0.01" value="${Number(r.preco_kit||0)}" ${r.preco_kit===null?'disabled':''}></label><button class="outline-btn adm-preco-kit-btn" ${r.preco_kit===null?'disabled':''}>Atualizar preço do kit</button><label class="field"><span>Estoque de kits</span><input class="adm-estoque" type="number" min="0" step="1" value="${r.estoque_disponivel===null?'':Number(r.estoque_disponivel)}" ${r.estoque_disponivel===null?'placeholder="Sem kit cadastrado"':''}></label><button class="outline-btn adm-estoque-btn" ${r.estoque_disponivel===null?'disabled':''}>Atualizar estoque</button><button class="outline-btn adm-excluir">Excluir receita</button><p class="form-msg" role="status"></p></article>`).join('')}</div></div>`;
+    el.querySelectorAll('.admin-recipe').forEach(card=>{
+      const send=async(action,data)=>{const msg=card.querySelector('.form-msg');try{const response=await fetch(`../api.php?action=${action}`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({id_receita:Number(card.dataset.id),...data})});const result=await response.json();if(!response.ok||!result.success)throw new Error(result.message||'Falha ao salvar.');msg.textContent=result.message;msg.className='form-msg ok';return true}catch(error){msg.textContent=error.message;msg.className='form-msg erro';return false}};
+      card.querySelector('.adm-salvar').addEventListener('click',async()=>{if(await send('admin_receita_editar',{titulo:card.querySelector('.adm-titulo').value,tipo_acesso:card.querySelector('.adm-acesso').value,preco_conteudo:card.querySelector('.adm-preco').value})) renderGestaoReceitas();});
+      card.querySelector('.adm-estoque-btn').addEventListener('click',async()=>{if(await send('admin_estoque',{estoque_disponivel:card.querySelector('.adm-estoque').value})) renderGestaoReceitas();});
+      card.querySelector('.adm-preco-kit-btn').addEventListener('click',async()=>{if(await send('admin_preco_kit',{preco_kit:card.querySelector('.adm-preco-kit').value})) renderGestaoReceitas();});
+      card.querySelector('.adm-excluir').addEventListener('click',async()=>{if(!window.confirm(`Excluir a receita “${card.querySelector('.adm-titulo').value}”?`))return;if(await send('admin_receita_excluir',{})) renderGestaoReceitas();});
+    });
+  }catch(error){el.innerHTML=`<div class="section-card review-empty">${esc(error.message)}</div>`;}
 }
 
 async function renderVerificacoes(){

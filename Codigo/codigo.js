@@ -41,6 +41,7 @@ const MAPA_ESTILO = {
 const CENTRO_DEMO = { nome: 'Centro de Maravilha (demonstração)', lat: -26.7606, lng: -53.1748 };
 
 const RAIO_ENTREGA_PADRAO_KM = 2.5;
+let raioEntregaAtualKm = RAIO_ENTREGA_PADRAO_KM;
 const PREPARO_SIMULACAO_MS = 3500;  // tempo "preparando no restaurante" antes de o entregador sair
 const DURACAO_SIMULACAO_MS = 40000; // a viagem simulada dura 40 s na tela
 
@@ -84,14 +85,26 @@ function restauranteDoPedido() {
   return (dentro.length ? dentro : lista).slice(-1)[0];
 }
 
+function restauranteDaReceita(idReceita) {
+  const indicePorReceita = { 1: 0, 2: 1, 3: 2, 4: 3, 5: 4 };
+  const indice = indicePorReceita[Number(idReceita)];
+  if (indice === undefined) return null;
+  const definido = restaurantesProximos[indice];
+  const lat = CENTRO_DEMO.lat + (definido.norte * ESCALA_DISTANCIA_DEMO) / 111.2;
+  const lng = CENTRO_DEMO.lng + (definido.leste * ESCALA_DISTANCIA_DEMO) / (111.2 * Math.cos(CENTRO_DEMO.lat * Math.PI / 180));
+  const distancia = distanciaKmEntre(CENTRO_DEMO.lat, CENTRO_DEMO.lng, lat, lng);
+  return { nome: definido.nome, lat, lng, distancia, disponivel: distancia <= raioEntregaAtualKm };
+}
+
 function montarListaRestaurantesPerto(raioKm) {
-  const dentro = restaurantesDemo().filter(rest => rest.distancia <= Number(raioKm));
-  if (!dentro.length) return '<div class="sem-restaurantes">Nenhum restaurante dentro deste raio. Aumente o raio de entrega.</div>';
+  const dentro = restaurantesDemo();
+  if (!dentro.length) return '<div class="sem-restaurantes">Nenhum restaurante cadastrado.</div>';
   return dentro.map(rest => `
-      <div class="restaurante-card">
+      <div class="restaurante-card${rest.distancia > Number(raioKm) ? ' indisponivel' : ''}">
         <div>
           <span class="eyebrow">restaurante</span>
           <h3>${esc(rest.nome)}</h3>
+          <small>${rest.distancia <= Number(raioKm) ? 'Atende este endereço' : 'Fora do raio • receitas indisponíveis'}</small>
         </div>
         <div class="restaurante-meta">
           <span>${rest.tempo} min</span>
@@ -189,10 +202,13 @@ function inicializarMapaPerto() {
 
 function atualizarRaioPerto(valor) {
   const raio = Number(valor) || RAIO_ENTREGA_PADRAO_KM;
+  raioEntregaAtualKm = raio;
   const rotulo = document.getElementById('raioValor');
   const lista = document.getElementById('listaRestaurantes');
   if (rotulo) rotulo.textContent = `${raio.toString().replace('.', ',')} km`;
   if (lista) lista.innerHTML = montarListaRestaurantesPerto(raio);
+  const receitasPerto = document.getElementById('receitasPerto');
+  if (receitasPerto) receitasPerto.innerHTML = receitas.map(r => cardReceita(r, true, true)).join('');
   if (!mapaPerto) return;
 
   mapaPerto.raio = raio;
@@ -334,7 +350,6 @@ function atualizarBotoesRastreio() {
 }
 
 async function carregarPedidoRastreio() {
-  const demo = motivo => ({ demo: true, motivo, id: 12845, valor: 79.9, metodo: '', statusPedido: 'confirmado', entregue: false, persistir: false, linkPagamento: '' });
   try {
     const resposta = await fetch('api.php?action=pedido_rastreio', { credentials: 'same-origin', cache: 'no-store' });
     const payload = await resposta.json().catch(() => null);
@@ -348,13 +363,14 @@ async function carregarPedidoRastreio() {
         statusPedido: dados.status_pedido,
         entregue: !!dados.entregue,
         persistir: dados.status_pedido === 'confirmado' && !dados.entregue,
-        linkPagamento: dados.link_pagamento || ''
+        linkPagamento: dados.link_pagamento || '',
+        id_receita: Number(dados.id_receita || 0)
       };
     }
-    return demo(resposta.status === 401 ? 'sem-login' : 'sem-pedido');
+    return null;
   } catch (erro) {
     console.warn('Não foi possível carregar o pedido para o rastreio:', erro);
-    return demo('offline');
+    return null;
   }
 }
 
@@ -363,6 +379,11 @@ function aplicarPedidoNaTela(info) {
   if (numero) numero.innerHTML = `#${Number(info.id)}${info.demo ? '<small>demonstração</small>' : ''}`;
   definirTexto('rtValor', brl(info.valor));
   definirTexto('rtPagamento', info.metodo === 'pix' ? 'Pix (simulado)' : info.metodo === 'dinheiro' ? 'Dinheiro na entrega' : '—');
+  const restaurante = restauranteDaReceita(info.id_receita);
+  if (restaurante) {
+    definirTexto('rtRestauranteTopo', restaurante.nome);
+    definirTexto('rtRestauranteResumo', restaurante.nome);
+  }
   const aviso = document.getElementById('rtAviso');
   if (aviso) {
     if (!info.demo) aviso.textContent = 'Simulação demonstrativa: não há entregador real nem GPS. O andamento da entrega fica salvo no seu pedido.';
@@ -399,6 +420,35 @@ async function abrirTelaRastreio() {
   const aindaNaTela = document.getElementById('mapa-rastreio') && location.hash.slice(1).split('-')[0] === 'rastreio';
   if (!aindaNaTela) return;
   pedidoRastreio = info;
+  if (!info) {
+    const numero = document.getElementById('rtPedidoNumero');
+    if (numero) numero.textContent = 'Sem pedidos';
+    definirTexto('statusRastreio', 'Nenhuma entrega para acompanhar');
+    definirTexto('rtValor', '—');
+    definirTexto('rtPagamento', '—');
+    definirTexto('rtEtaTitulo', 'Sem entrega ativa');
+    definirTexto('etaRastreio', '—');
+    definirTexto('rtHora', 'Faça um pedido para acompanhar a entrega.');
+    definirTexto('rtAviso', 'Você ainda não possui entregas para acompanhar.');
+    const mapa = document.getElementById('mapa-rastreio');
+    if (mapa) mapa.innerHTML = '<div class="mapa-vazio"><div><strong>Nenhuma entrega</strong><p>Seus pedidos aparecerão aqui quando houver um pedido válido.</p></div></div>';
+    const moto = document.querySelector('.marcador-moto');
+    if (moto) moto.remove();
+    const entregador = document.querySelector('.rt-entregador');
+    if (entregador) entregador.hidden = true;
+    const legenda = document.querySelector('.rt-legenda');
+    if (legenda) legenda.hidden = true;
+    const resumoRestaurante = document.getElementById('rtRestauranteResumo')?.closest('.rt-linha');
+    if (resumoRestaurante) resumoRestaurante.hidden = true;
+    const passos = document.getElementById('rtPassos');
+    if (passos) passos.innerHTML = '<li class="rt-passo">Nenhum pedido registrado.</li>';
+    const barra = document.getElementById('rtBarra');
+    if (barra) barra.style.width = '0%';
+    atualizarBotoesRastreio();
+    const repetir = document.getElementById('rtBtnRepetir');
+    if (repetir) repetir.hidden = true;
+    return;
+  }
   aplicarPedidoNaTela(info);
   inicializarRastreio();
 }
@@ -414,14 +464,15 @@ function inicializarRastreio(forcarSimulacao = false) {
   limparMapas();
   reiniciarPainelRastreio();
 
-  const pedido = pedidoRastreio || { demo: true, id: 12845, statusPedido: 'confirmado', entregue: false, persistir: false };
+  if (!pedidoRastreio) return;
+  const pedido = pedidoRastreio;
   let modo = 'simular';
   if (pedido.statusPedido === 'pendente') modo = 'espera';
   else if (pedido.entregue && !forcarSimulacao) modo = 'concluido';
   const opcoes = { modo, persistir: modo === 'simular' && !!pedido.persistir, idPedido: pedido.id };
   atualizarBotoesRastreio();
 
-  const restaurante = restauranteDoPedido();
+  const restaurante = pedidoRastreio.restaurante || restauranteDaReceita(pedidoRastreio.id_receita) || restauranteDoPedido();
   const origem = [restaurante.lng, restaurante.lat];
   const destino = [CENTRO_DEMO.lng, CENTRO_DEMO.lat];
   const estado = { map: null, raf: 0, passo: -1 };
@@ -920,8 +971,15 @@ const BAIRROS_MARAVILHA = [
   'Padre Antônio', 'Kasper', 'Madalozzo', 'Jardim', 'Frei Damião',
   'Progresso', 'Morada do Sol', 'José de Anchieta', 'Civemara'
 ];
+const ESTADOS_BR = [
+  ['AC','Acre','🇧🇷'],['AL','Alagoas','🇧🇷'],['AP','Amapá','🇧🇷'],['AM','Amazonas','🇧🇷'],['BA','Bahia','🇧🇷'],['CE','Ceará','🇧🇷'],['DF','Distrito Federal','🇧🇷'],['ES','Espírito Santo','🇧🇷'],['GO','Goiás','🇧🇷'],['MA','Maranhão','🇧🇷'],['MT','Mato Grosso','🇧🇷'],['MS','Mato Grosso do Sul','🇧🇷'],['MG','Minas Gerais','🇧🇷'],['PA','Pará','🇧🇷'],['PB','Paraíba','🇧🇷'],['PR','Paraná','🇧🇷'],['PE','Pernambuco','🇧🇷'],['PI','Piauí','🇧🇷'],['RJ','Rio de Janeiro','🇧🇷'],['RN','Rio Grande do Norte','🇧🇷'],['RS','Rio Grande do Sul','🇧🇷'],['RO','Rondônia','🇧🇷'],['RR','Roraima','🇧🇷'],['SC','Santa Catarina','🇧🇷'],['SP','São Paulo','🇧🇷'],['SE','Sergipe','🇧🇷'],['TO','Tocantins','🇧🇷']
+];
 
 function montarSelectEndereco(campo, rotulo, opcoes, valorAtual = '') {
+  if (campo === 'estado') {
+    const selecionado = String(valorAtual || '').toUpperCase();
+    return `<label class="campo"><span>${rotulo}</span><select name="endereco_estado" data-endereco-select="estado" required><option value="">Selecione o estado</option>${ESTADOS_BR.map(([uf,nome,flag])=>`<option value="${uf}" ${selecionado===uf?'selected':''}>${flag} ${nome} (${uf})</option>`).join('')}</select><input name="endereco_estado_manual" data-endereco-manual="estado" type="text" maxlength="2" placeholder="UF" hidden></label>`;
+  }
   const lista = [...new Set((opcoes || []).filter(Boolean))];
   const options = lista.map(valor => `<option value="${esc(valor)}" ${valorAtual.toLowerCase() === valor.toLowerCase() ? 'selected' : ''}>${esc(valor)}</option>`).join('');
   const maxLength = campo === 'logradouro' ? 150 : (campo === 'estado' ? 2 : 100);
@@ -967,6 +1025,10 @@ function configurarCamposEndereco() {
     const select = form.querySelector(`[data-endereco-select="${campo}"]`);
     const manual = form.querySelector(`[data-endereco-manual="${campo}"]`);
     const valores = [...new Set((opcoes || []).filter(Boolean))];
+    if (campo === 'estado') {
+      select.value = String(valor || '').toUpperCase();
+      return;
+    }
     select.innerHTML = `<option value="">Selecione uma opção</option><option value="__manual__">Colocar manualmente</option>${valores.map(item => `<option value="${esc(item)}">${esc(item)}</option>`).join('')}`;
     if (valor && valores.some(item => item.toLowerCase() === valor.toLowerCase())) select.value = valores.find(item => item.toLowerCase() === valor.toLowerCase());
     else select.value = valores.length ? '' : '__manual__';
@@ -997,10 +1059,10 @@ function configurarCamposEndereco() {
       preencherSelect('estado', dados.estado ? [dados.estado] : [], dados.estado || '');
       preencherSelect('cidade', dados.cidade ? [dados.cidade] : [], dados.cidade || '');
       preencherSelect('logradouro', dados.logradouro ? [dados.logradouro] : [], dados.logradouro || '');
-      const bairros = cidadeMaravilha ? BAIRROS_MARAVILHA : (dados.bairro ? [dados.bairro] : []);
+      const bairros = dados.bairro ? [dados.bairro] : [];
       preencherSelect('bairro', bairros, dados.bairro || '');
       if (cidadeMaravilha && cep === '89874000') {
-        msg.textContent = 'Maravilha/SC identificada. O CEP é geral: escolha uma sugestão de bairro, confirme o endereço e informe a rua manualmente.';
+        msg.textContent = 'Maravilha/SC identificada. Este CEP é geral e não informa rua ou bairro; preencha esses campos manualmente.';
         msg.className = 'campo-ajuda sucesso';
       } else if (dados.bairro) {
         msg.textContent = 'Endereço localizado. Confira os dados e complete o número.';
@@ -1014,8 +1076,8 @@ function configurarCamposEndereco() {
         preencherSelect('estado', ['SC'], 'SC');
         preencherSelect('cidade', ['Maravilha'], 'Maravilha');
         preencherSelect('logradouro', [], '');
-        preencherSelect('bairro', BAIRROS_MARAVILHA, '');
-        msg.textContent = 'Consulta externa indisponível. Maravilha/SC foi reconhecida pelo CEP geral; escolha uma sugestão de bairro, confirme o endereço e informe a rua manualmente.';
+        preencherSelect('bairro', [], '');
+        msg.textContent = 'Consulta externa indisponível. Maravilha/SC foi reconhecida pelo CEP geral; preencha rua e bairro manualmente.';
       } else {
         ['estado', 'logradouro', 'bairro', 'cidade'].forEach(campo => preencherSelect(campo, [], ''));
         msg.textContent = `${erro.message || 'Consulta de CEP indisponível.'} Preencha os campos manualmente.`;
@@ -1029,6 +1091,46 @@ function configurarCamposEndereco() {
     if (cepInput.value.replace(/\D/g, '').length === 8) timer = setTimeout(consultar, 250);
   });
   cepInput.addEventListener('blur', consultar);
+}
+
+async function carregarPreferenciaPagamento(form) {
+  try {
+    const resposta = await fetch('api.php?action=pagamento_preferencia', { credentials: 'same-origin', cache: 'no-store' });
+    const payload = await resposta.json();
+    const pref = payload?.success ? payload.data : null;
+    if (!pref || !form.isConnected) return;
+    const endereco = pref.endereco;
+    if (endereco) {
+      form.elements.endereco_cep.value = `${String(endereco.cep).slice(0,5)}-${String(endereco.cep).slice(5)}`;
+      form.elements.endereco_numero.value = endereco.numero || '';
+      form.elements.endereco_complemento.value = endereco.complemento || '';
+      const estado = form.querySelector('[data-endereco-select="estado"]');
+      if (estado) estado.value = String(endereco.estado || '').toUpperCase();
+      ['logradouro','bairro','cidade'].forEach(campo => {
+        const select = form.querySelector(`[data-endereco-select="${campo}"]`);
+        const manual = form.querySelector(`[data-endereco-manual="${campo}"]`);
+        const valor = endereco[campo] || '';
+        if (select && manual && valor) {
+          select.value = '__manual__';
+          select.dispatchEvent(new Event('change'));
+          manual.value = valor;
+        }
+      });
+    }
+    const metodo = form.querySelector(`input[name="metodo_pagamento"][value="${pref.metodo}"]`);
+    if (metodo) { metodo.checked = true; atualizarMetodoPagamento(); }
+    if (pref.metodo === 'pix') {
+      if (pref.banco_pagador && form.elements.pix_banco) form.elements.pix_banco.value = pref.banco_pagador;
+      if (pref.titular_pagador && form.elements.pix_titular) form.elements.pix_titular.value = pref.titular_pagador;
+      const cpf = form.elements.pix_cpf;
+      if (cpf && pref.cpf_final4) {
+        cpf.placeholder = `•••.•••.•••-${pref.cpf_final4} (preencha o CPF fictício para esta simulação)`;
+        cpf.insertAdjacentHTML('afterend', '<small class="campo-ajuda">Banco e titular preenchidos da sua última simulação. O CPF completo não é salvo; somente os quatro últimos dígitos.</small>');
+      }
+    }
+  } catch (erro) {
+    console.info('Preferência de pagamento não disponível:', erro);
+  }
 }
 
 async function confirmarPagamento(event) {
@@ -1128,11 +1230,14 @@ function abrirSlide(i) {
 
 /* ---------- cards ---------- */
 
-function cardReceita(r, compacto = false) {
-  return `<a class="card-receita${compacto ? ' compacto' : ''}" href="#receita-${r.id_receita}">
+function cardReceita(r, compacto = false, regional = false) {
+  const restaurante = restauranteDaReceita(r.id_receita);
+  const indisponivel = regional && restaurante && !restaurante.disponivel;
+  return `<a class="card-receita${compacto ? ' compacto' : ''}${indisponivel ? ' receita-indisponivel' : ''}" href="${indisponivel ? '#' : `#receita-${r.id_receita}`}" ${indisponivel ? 'aria-disabled="true" onclick="return false"' : ''}>
     <div class="card-img-wrap">${foto(r)}<span class="tag">${esc(niveis[r.nivel_dificuldade] || 'Sem nível')}</span></div>
     <div class="card-corpo">
       <h3>${esc(r.titulo)}</h3>
+      <p class="receita-restaurante">🍽 ${esc(restaurante?.nome || 'Restaurante não definido')}${indisponivel ? ' • Indisponível nesta área' : ''}</p>
       <div class="rating">${estrelas(r.nota)} <span>${Number(r.nota || 0).toFixed(1)} <em>(${esc(r.avaliacoes || 'Nova')})</em></span></div>
       <div class="restricoes-lista">${tagsRestricoes(r)}</div>
       <div class="meta"><span>⏱ ${r.tempo_preparo_minutos || 0} min</span><span>${r.tipo_acesso === 'exclusivo_pago' ? brl(r.preco_conteudo) : 'Gratuita'}</span></div>
@@ -1145,7 +1250,7 @@ const telas = {
     const slides = receitas.slice(0, 7).map((r, i) => {
       const d = deslocamento(i);
       return `<div class="slide ${Math.abs(d) > 2 ? 'dh' : 'd' + Math.abs(d)}" style="--lado:${Math.sign(d)}" data-d="${d}" data-i="${i}" onclick="abrirSlide(${i})">
-        ${foto(r)}<div class="slide-legenda"><strong>${esc(r.titulo)}</strong><span>${r.tempo_preparo_minutos} min • ${niveis[r.nivel_dificuldade]}</span></div>
+        ${foto(r)}<div class="slide-legenda"><strong>${esc(r.titulo)}</strong><span>${esc(restauranteDaReceita(r.id_receita)?.nome || 'Restaurante não definido')}</span><span>${r.tempo_preparo_minutos} min • ${niveis[r.nivel_dificuldade]}</span></div>
       </div>`;
     }).join('');
 
@@ -1198,7 +1303,7 @@ const telas = {
           <p class="aviso-demo-mapa">Restaurantes fictícios, usados apenas para demonstrar o funcionamento do site.</p>
         </div>
       </div>
-      <div class="grade destaque-grid">${receitas.slice(0, 3).map(r => cardReceita(r, true)).join('')}</div>
+      <h2>Receitas da região</h2><div class="grade destaque-grid" id="receitasPerto">${receitas.map(r => cardReceita(r, true, true)).join('')}</div>
     </section>`;
   },
 
@@ -1221,14 +1326,14 @@ const telas = {
             </div>
           </div>
           <div class="rt-barra"><div class="rt-barra-fill" id="rtBarra"></div></div>
-          <div class="rt-legenda"><span>🍽️ ${esc(restPedido.nome)}</span><span id="rtDistancia">—</span><span>🏠 Você</span></div>
+          <div class="rt-legenda"><span>🍽️ <span id="rtRestauranteTopo">${esc(restPedido.nome)}</span></span><span id="rtDistancia">—</span><span>🏠 Você</span></div>
         </div>
         <aside class="rt-lateral">
           <div class="rt-eta"><span id="rtEtaTitulo">Chegada em</span><strong id="etaRastreio">${restPedido.tempo} min</strong><small id="rtHora">Carregando...</small></div>
           <ol class="rt-passos" id="rtPassos">${montarPassosRastreio(1)}</ol>
           <div class="rt-entregador"><div class="rt-entregador-avatar">LA</div><div><strong>Lucas A.</strong><small>Entregador • ⭐ 4,9</small></div></div>
           <div class="rt-resumo">
-            <div class="rt-linha"><span>Restaurante</span><strong>${esc(restPedido.nome)}</strong></div>
+            <div class="rt-linha"><span>Restaurante</span><strong id="rtRestauranteResumo">${esc(restPedido.nome)}</strong></div>
             <div class="rt-linha"><span>Valor</span><strong id="rtValor">—</strong></div>
             <div class="rt-linha"><span>Pagamento</span><strong id="rtPagamento">—</strong></div>
             <div class="rt-linha"><span>Local de entrega</span><strong>${esc(CENTRO_DEMO.nome.replace(' (demonstração)', ''))}</strong></div>
@@ -1852,6 +1957,7 @@ function rota() {
       });
       atualizarMetodoPagamento();
       configurarCamposEndereco();
+      carregarPreferenciaPagamento(document.getElementById('pagamentoForm'));
     }, 0);
   }
   if (['perto', 'rastreio'].includes(pag)) {

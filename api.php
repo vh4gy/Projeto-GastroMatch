@@ -98,6 +98,11 @@ function cnpjHasValidFormat(string $cnpj): bool
     return $values[13] === $second;
 }
 
+function isDemoCnpj(string $cnpj): bool
+{
+    return strtoupper(preg_replace('/[^A-Z0-9]+/i', '', $cnpj)) === '10000000000064';
+}
+
 function brasilApiGet(string $endpoint): array
 {
     $url = 'https://brasilapi.com.br/api/' . ltrim($endpoint, '/');
@@ -345,11 +350,35 @@ if ($action === 'consultar_cep') {
     jsonReply(false, 'BrasilAPI indisponível no momento. Você pode preencher o endereço manualmente.', ['fallback' => true], 503);
 }
 
+if ($action === 'pagamento_preferencia') {
+    $usuario = currentDatabaseUser($pdo);
+    if (!$usuario) jsonReply(false, 'Entre na sua conta para consultar suas preferências.', null, 401);
+    $stmt = $pdo->prepare('SELECT pg.metodo, pg.banco_pagador, pg.titular_pagador, pg.cpf_final4
+        FROM pagamentos pg JOIN pedidos p ON p.id_pedido = pg.id_pedido
+        WHERE p.id_cliente = :usuario AND pg.status IN ("pendente", "aprovado")
+        ORDER BY pg.id_pagamento DESC LIMIT 1');
+    $stmt->execute([':usuario' => (int)$usuario['id_usuario']]);
+    $preferencia = $stmt->fetch();
+    $enderecoStmt = $pdo->prepare('SELECT cep, logradouro, numero, complemento, bairro, cidade, estado
+        FROM enderecos WHERE id_usuario = :usuario
+        ORDER BY endereco_padrao DESC, id_endereco DESC LIMIT 1');
+    $enderecoStmt->execute([':usuario' => (int)$usuario['id_usuario']]);
+    $endereco = $enderecoStmt->fetch() ?: null;
+    if ($preferencia) $preferencia['endereco'] = $endereco;
+    elseif ($endereco) $preferencia = ['metodo' => null, 'endereco' => $endereco];
+    jsonReply(true, 'Preferência de pagamento carregada.', $preferencia ?: null);
+}
+
 if ($action === 'consultar_cnpj') {
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') jsonReply(false, 'Método não permitido.', null, 405);
     $input = json_decode(file_get_contents('php://input'), true) ?? [];
     $cnpj = strtoupper(preg_replace('/[^A-Z0-9]+/i', '', (string)($input['cnpj'] ?? '')));
     if (!cnpjHasValidFormat($cnpj)) jsonReply(false, 'CNPJ inválido. Confira os 14 caracteres e os dígitos verificadores.', null, 400);
+    if (isDemoCnpj($cnpj)) jsonReply(true, 'CNPJ fictício de demonstração. Não representa uma empresa real e não valida o cadastro.', [
+        'status' => 'demo', 'cnpj' => $cnpj, 'razao_social' => 'Empresa Fictícia GastroMatch',
+        'nome_fantasia' => 'Cozinha Teste Demo', 'situacao' => 'Demonstração; não consultado na Receita Federal',
+        'cidade' => '', 'estado' => '', 'cnae_principal' => '',
+    ]);
     $consulta = consultarBrasilApiCnpj($cnpj);
     if ($consulta['status'] === 'nao_encontrado') jsonReply(false, 'CNPJ não encontrado na consulta pública da BrasilAPI.', ['status' => 'nao_encontrado'], 404);
     if ($consulta['status'] === 'invalido') jsonReply(false, 'A BrasilAPI rejeitou o formato do CNPJ.', ['status' => 'invalido'], 400);
@@ -402,7 +431,9 @@ if ($action === 'register') {
         if (!cnpjHasValidFormat($cnpj)) {
             jsonReply(false, 'Informe um CNPJ válido, numérico ou alfanumérico, com 14 caracteres e verificadores corretos.', null, 400);
         }
-        $consultaCnpj = consultarBrasilApiCnpj($cnpj);
+        $consultaCnpj = isDemoCnpj($cnpj)
+            ? ['status' => 'demo', 'data' => ['razao_social' => 'Empresa Fictícia GastroMatch', 'nome_fantasia' => 'Cozinha Teste Demo']]
+            : consultarBrasilApiCnpj($cnpj);
         if ($consultaCnpj['status'] === 'nao_encontrado') {
             jsonReply(false, 'Este CNPJ não foi localizado na consulta pública. Confira os dados antes de continuar.', null, 422);
         }
@@ -1410,6 +1441,7 @@ if ($action === 'pedido_rastreio') {
     $idPedido = (int)($_GET['id'] ?? 0);
 
     $sql = 'SELECT o.id_pedido, o.valor_total, o.status_pedido, o.status_entrega, o.data_pedido,
+            (SELECT ip.id_receita FROM itens_pedido ip WHERE ip.id_pedido = o.id_pedido AND ip.id_receita IS NOT NULL ORDER BY ip.id_item LIMIT 1) AS id_receita,
             (SELECT pg.metodo FROM pagamentos pg WHERE pg.id_pedido = o.id_pedido ORDER BY pg.id_pagamento DESC LIMIT 1) AS metodo_pagamento,
             (SELECT pg.link_pagamento FROM pagamentos pg WHERE pg.id_pedido = o.id_pedido AND pg.metodo = "pix" AND pg.status = "pendente" ORDER BY pg.id_pagamento DESC LIMIT 1) AS link_pagamento
         FROM pedidos o
@@ -1434,6 +1466,7 @@ if ($action === 'pedido_rastreio') {
 
     jsonReply(true, 'Pedido carregado.', [
         'id_pedido' => (int)$pedido['id_pedido'],
+        'id_receita' => (int)($pedido['id_receita'] ?? 0),
         'valor_total' => (float)$pedido['valor_total'],
         'status_pedido' => $pedido['status_pedido'],
         'status_entrega' => $pedido['status_entrega'],
@@ -1505,6 +1538,46 @@ if ($action === 'pedido_entrega') {
         }
         jsonReply(false, 'Não foi possível salvar o andamento da entrega.', null, 500);
     }
+}
+
+if (in_array($action, ['admin_receitas', 'admin_receita_editar', 'admin_receita_excluir', 'admin_estoque', 'admin_preco_kit'], true)) {
+    $admin = currentDatabaseUser($pdo);
+    if (!$admin || $admin['tipo_usuario'] !== 'admin') jsonReply(false, 'Acesso exclusivo do administrador.', null, 403);
+    if ($action === 'admin_receitas') {
+        $rows = $pdo->query('SELECT r.id_receita, r.titulo, r.tipo_acesso, r.preco_conteudo, r.tempo_preparo_minutos, k.estoque_disponivel, k.preco_kit
+            FROM receitas r LEFT JOIN kits_ingredientes k ON k.id_receita = r.id_receita ORDER BY r.id_receita')->fetchAll();
+        jsonReply(true, 'Receitas administrativas carregadas.', $rows);
+    }
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') jsonReply(false, 'Método não permitido.', null, 405);
+    $input = json_decode(file_get_contents('php://input'), true) ?? [];
+    $id = (int)($input['id_receita'] ?? 0);
+    if ($id < 1) jsonReply(false, 'Receita inválida.', null, 400);
+    if ($action === 'admin_receita_excluir') {
+        $stmt = $pdo->prepare('DELETE FROM receitas WHERE id_receita = :id');
+        $stmt->execute([':id' => $id]);
+        jsonReply($stmt->rowCount() ? true : false, $stmt->rowCount() ? 'Receita excluída.' : 'Receita não encontrada.', null, $stmt->rowCount() ? 200 : 404);
+    }
+    if ($action === 'admin_estoque') {
+        $estoque = filter_var($input['estoque_disponivel'] ?? null, FILTER_VALIDATE_INT);
+        if ($estoque === false || $estoque < 0) jsonReply(false, 'Estoque deve ser um número inteiro igual ou maior que zero.', null, 400);
+        $stmt = $pdo->prepare('UPDATE kits_ingredientes SET estoque_disponivel = :estoque WHERE id_receita = :id');
+        $stmt->execute([':estoque' => $estoque, ':id' => $id]);
+        jsonReply(true, $stmt->rowCount() ? 'Estoque atualizado.' : 'Kit não encontrado ou estoque já estava nesse valor.');
+    }
+    if ($action === 'admin_preco_kit') {
+        $preco = filter_var($input['preco_kit'] ?? null, FILTER_VALIDATE_FLOAT);
+        if ($preco === false || $preco <= 0) jsonReply(false, 'Preço do kit deve ser maior que zero.', null, 400);
+        $stmt = $pdo->prepare('UPDATE kits_ingredientes SET preco_kit = :preco WHERE id_receita = :id');
+        $stmt->execute([':preco' => number_format((float)$preco, 2, '.', ''), ':id' => $id]);
+        jsonReply(true, $stmt->rowCount() ? 'Preço do kit atualizado.' : 'Kit não encontrado ou preço já estava nesse valor.');
+    }
+    $titulo = trim((string)($input['titulo'] ?? ''));
+    $tipo = (string)($input['tipo_acesso'] ?? 'gratuito');
+    $preco = filter_var($input['preco_conteudo'] ?? 0, FILTER_VALIDATE_FLOAT);
+    if ($titulo === '' || mb_strlen($titulo) > 150 || !in_array($tipo, ['gratuito', 'exclusivo_pago'], true) || $preco === false || $preco < 0) jsonReply(false, 'Revise título, acesso e preço.', null, 400);
+    $stmt = $pdo->prepare('UPDATE receitas SET titulo = :titulo, tipo_acesso = :tipo, preco_conteudo = :preco WHERE id_receita = :id');
+    $stmt->execute([':titulo' => $titulo, ':tipo' => $tipo, ':preco' => $preco, ':id' => $id]);
+    jsonReply(true, 'Receita atualizada.');
 }
 
 if ($action === 'receitas') {

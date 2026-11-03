@@ -278,11 +278,11 @@ ON DUPLICATE KEY UPDATE url_video = VALUES(url_video), duracao_segundos = VALUES
 
 INSERT INTO kits_ingredientes (id_receita, preco_kit, estoque_disponivel)
 VALUES
-(1, 14.89, 20),
-(2, 25.99, 20),
-(3, 11.99, 20),
-(4, 19.90, 20),
-(5, 32.90, 20)
+(1, 29.90, 20),
+(2, 34.90, 20),
+(3, 49.90, 20),
+(4, 39.90, 20),
+(5, 44.90, 20)
 ON DUPLICATE KEY UPDATE preco_kit = VALUES(preco_kit), estoque_disponivel = VALUES(estoque_disponivel);
 
 INSERT INTO ingredientes_receita (id_receita, ordem, ingrediente)

@@ -10,6 +10,7 @@ const ACESSOS = {
     label: 'Administrador', email: 'admin@gastromatch.com.br', redirect: 'AreaRestrita/painel.html', tipoUsuario: 'admin', idUsuario: 1
   }
 };
+const CNPJ_DEMO = '10000000000064';
 
 const $ = (s) => document.querySelector(s);
 let roleSelecionado = '';
@@ -61,6 +62,12 @@ async function consultarCnpjCadastro() {
   const botao = $('#consultarCnpjBtn');
   if (botao) botao.disabled = true;
   try {
+    if (cnpj === CNPJ_DEMO) {
+      msg.textContent = 'CNPJ fictício de demonstração: Empresa Fictícia GastroMatch. Não representa empresa real e seguirá sem validação cadastral.';
+      msg.className = 'campo-ajuda aviso';
+      if (empresa && !empresa.value.trim()) empresa.value = 'Cozinha Teste Demo';
+      return;
+    }
     const resposta = await fetch('api.php?action=consultar_cnpj', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cnpj })
@@ -75,6 +82,12 @@ async function consultarCnpjCadastro() {
       throw new Error(payload.message || 'Não foi possível validar o CNPJ.');
     }
     const dados = payload.data;
+    if (dados.status === 'demo') {
+      msg.textContent = 'CNPJ fictício de demonstração. Não representa uma empresa real e não valida o cadastro; o perfil continuará pendente para análise.';
+      msg.className = 'campo-ajuda aviso';
+      if (empresa && !empresa.value.trim()) empresa.value = dados.nome_fantasia || 'Cozinha Teste Demo';
+      return;
+    }
     if (dados.status !== 'ativo') throw new Error('CNPJ localizado, mas não está ativo. O cadastro não poderá prosseguir.');
     if (empresa && !empresa.value.trim()) empresa.value = dados.nome_fantasia || dados.razao_social || '';
     msg.textContent = `CNPJ ativo: ${dados.razao_social || 'Empresa localizada'}${dados.nome_fantasia ? ` • ${dados.nome_fantasia}` : ''}. A aprovação do perfil continua dependendo da equipe.`;
