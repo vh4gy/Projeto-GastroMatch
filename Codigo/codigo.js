@@ -708,6 +708,17 @@ const restricoesDisponiveis = [
   { id: 'baixo-sodio', label: 'Baixo sódio' }
 ];
 
+const alergenosDisponiveis = [
+  { id: 'crustaceos', label: 'Crustáceos (camarão, caranguejo)' },
+  { id: 'ovos', label: 'Ovos' },
+  { id: 'trigo', label: 'Trigo / glúten' },
+  { id: 'leite', label: 'Leite e derivados' },
+  { id: 'amendoim', label: 'Amendoim' },
+  { id: 'soja', label: 'Soja' },
+  { id: 'peixes', label: 'Peixes' },
+  { id: 'castanhas', label: 'Castanhas e nozes' }
+];
+
 /* ---------- dados locais de demonstração ---------- */
 
 const perfilPadrao = {
@@ -809,6 +820,9 @@ function salvarReceitasCriadas() {
 
 let perfilAtual = carregarPerfil();
 let receitas = carregarReceitas();
+const receitasLiberadas = new Set();
+const acessosReceitasVerificados = new Set();
+const chaveAcessoReceita = id => `${Number(carregarPerfil().id_usuario || 0)}:${Number(id)}`;
 
 function normalizarReceitaAPI(receita) {
   const parseArray = (valor) => {
@@ -841,6 +855,7 @@ function normalizarReceitaAPI(receita) {
     preco_kit: Number(receita.preco_kit || 0),
     estoque_disponivel: Number(receita.estoque_disponivel || 0),
     restricoes: Array.isArray(receita.restricoes) ? receita.restricoes : parseArray(receita.restricoes),
+    alergenos: Array.isArray(receita.alergenos) ? receita.alergenos : parseArray(receita.alergenos),
     ingredientes: parseArray(receita.ingredientes),
     preparo: parseArray(receita.preparo),
     criado_pelo_chef: Boolean(receita.criado_pelo_chef ?? true),
@@ -922,8 +937,15 @@ function emBreve(titulo, texto) {
 
 function tagsRestricoes(r) {
   const lista = r.restricoes || [];
-  if (!lista.length) return '<span class="tag-restricao neutra">Sem restrição informada</span>';
+  if (!lista.length) return '';
   return lista.map(x => `<span class="tag-restricao">${esc(restricaoLabel(x))}</span>`).join('');
+}
+
+function avisoAlergenos(r) {
+  const ids = r.alergenos || [];
+  if (!ids.length) return '<div class="aviso-alergenos"><strong>Alergênicos:</strong> não informados</div>';
+  const labels = ids.map(id => alergenosDisponiveis.find(a => a.id === id)?.label || id);
+  return `<div class="aviso-alergenos"><strong>Contém:</strong> ${labels.map(esc).join(', ')}. <small>Confira os ingredientes e possíveis contaminações cruzadas.</small></div>`;
 }
 
 /* ---------- carrinho ---------- */
@@ -1239,7 +1261,7 @@ function cardReceita(r, compacto = false, regional = false) {
       <h3>${esc(r.titulo)}</h3>
       <p class="receita-restaurante">🍽 ${esc(restaurante?.nome || 'Restaurante não definido')}${indisponivel ? ' • Indisponível nesta área' : ''}</p>
       <div class="rating">${estrelas(r.nota)} <span>${Number(r.nota || 0).toFixed(1)} <em>(${esc(r.avaliacoes || 'Nova')})</em></span></div>
-      <div class="restricoes-lista">${tagsRestricoes(r)}</div>
+      ${(r.restricoes || []).length ? `<div class="restricoes-lista">${tagsRestricoes(r)}</div>` : ''}${avisoAlergenos(r)}
       <div class="meta"><span>⏱ ${r.tempo_preparo_minutos || 0} min</span><span>${r.tipo_acesso === 'exclusivo_pago' ? brl(r.preco_conteudo) : 'Gratuita'}</span></div>
     </div>
   </a>`;
@@ -1420,6 +1442,9 @@ const telas = {
           </div>
           <div class="form-card"><div class="form-topo"><div><span class="eyebrow">3 • restrições</span><h2>Restrições alimentares</h2><p class="form-ajuda">As opções marcadas serão gravadas no relacionamento <strong>receitas_restricoes</strong>.</p></div></div>
             <div class="restricoes-grid">${restricoesDisponiveis.map(r => `<label class="check-card"><input type="checkbox" name="restricoes" value="${r.id}" ${temp.restricoes?.includes(r.id) ? 'checked' : ''}><span><b>${esc(r.label)}</b><small>Marque apenas se a receita atender à restrição.</small></span></label>`).join('')}</div>
+          </div>
+          <div class="form-card"><div class="form-topo"><div><span class="eyebrow">4 • segurança alimentar</span><h2>Alergênicos presentes</h2><p class="form-ajuda">Marque os alergênicos presentes nos ingredientes. É diferente das restrições que a receita atende.</p></div></div>
+            <div class="restricoes-grid">${alergenosDisponiveis.map(a => `<label class="check-card"><input type="checkbox" name="alergenos" value="${a.id}" ${temp.alergenos?.includes(a.id) ? 'checked' : ''}><span><b>${esc(a.label)}</b><small>Marque se estiver presente.</small></span></label>`).join('')}</div>
           </div>
         </div>
         <aside class="form-coluna-lateral">
@@ -1654,6 +1679,7 @@ function coletarFormularioReceita() {
     tipo_acesso: String(dados.get('tipo_acesso')||'gratuito'),
     preco_conteudo: Number(dados.get('preco_conteudo')||0),
     restricoes,
+    alergenos: dados.getAll('alergenos'),
     ingredientes: String(dados.get('ingredientes')||'').split(/\n+/).map(s=>s.trim()).filter(Boolean),
     preparo: String(dados.get('preparo')||'').split(/\n+/).map(s=>s.trim()).filter(Boolean),
     url_video: String(dados.get('url_video')||'').trim(),
@@ -1763,12 +1789,64 @@ async function reenviarVerificacao(event) {
 
 /* ---------- receita ---------- */
 
+async function verificarAcessoReceita(id) {
+  const receita = achar(id);
+  const chave = chaveAcessoReceita(id);
+  if (!receita || receita.tipo_acesso !== 'exclusivo_pago' || acessosReceitasVerificados.has(chave)) return;
+  try {
+    const resposta = await fetch(`api.php?action=acesso_receita&id=${encodeURIComponent(id)}`, { cache: 'no-store', credentials: 'same-origin' });
+    const payload = await resposta.json();
+    acessosReceitasVerificados.add(chave);
+    if (payload.success && payload.data?.liberada) receitasLiberadas.add(chave);
+    if (location.hash === `#receita-${id}`) rota();
+  } catch (erro) {
+    console.warn('Não foi possível consultar o acesso à receita.', erro);
+  }
+}
+
+async function confirmarCompraReceita(id) {
+  if (!carregarPerfil().id_usuario) {
+    toast('Entre na sua conta para comprar esta receita.');
+    window.location.href = 'login.html';
+    return;
+  }
+  location.hash = `#compraReceita-${Number(id)}`;
+}
+
+async function enviarPagamentoReceita(event, id) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const cpf = String(form.elements.cpf.value || '').replace(/\D/g, '');
+  if (cpf.length !== 11) { toast('Informe os 11 dígitos do CPF fictício para a simulação.'); return; }
+  const resposta = await fetch('api.php?action=confirmar_compra_receita', {
+    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id_receita: Number(id), banco: form.elements.banco.value, titular: form.elements.titular.value.trim(), cpf })
+  });
+  const payload = await resposta.json().catch(() => ({ success: false }));
+  if (!resposta.ok || !payload.success) {
+    toast(payload.message || 'Não foi possível confirmar a compra. Entre na sua conta e tente novamente.');
+    return;
+  }
+  receitasLiberadas.add(chaveAcessoReceita(id));
+  toast('Compra de demonstração confirmada. Receita desbloqueada!');
+  location.hash = `#receita-${Number(id)}`;
+}
+
+function telaPagamentoReceita(id) {
+  const r = achar(id);
+  if (!r || r.tipo_acesso !== 'exclusivo_pago' || (receitasLiberadas.has(chaveAcessoReceita(id)) && !location.hash.endsWith('-preview'))) return r ? telaReceita(id) : emBreve('Receita não encontrada', 'Volte ao feed e escolha uma receita.');
+  return `<section class="pagina pagina-pagamento"><div class="pagina-cabecalho"><div><span class="eyebrow">compra de conteúdo</span><h2>Pagamento da receita</h2><p>${esc(r.titulo)}</p></div><a href="#receita-${Number(id)}" class="btn btn-ghost">Voltar à receita</a></div><div class="pagamento-layout"><form class="form-card pagamento-card" onsubmit="enviarPagamentoReceita(event, ${Number(id)})"><div class="payment-box pix-box"><strong>Pix de demonstração</strong><p>Preencha os dados fictícios para simular a confirmação. Nenhuma cobrança será realizada.</p><div class="form-grid"><label class="campo"><span>Banco usado na simulação</span><select name="banco" required><option value="">Selecione</option><option value="banco_do_brasil">Banco do Brasil</option><option value="caixa">Caixa</option><option value="itau">Itaú</option><option value="bradesco">Bradesco</option><option value="santander">Santander</option><option value="inter">Inter</option><option value="nubank">Nubank</option><option value="outro">Outro</option></select></label><label class="campo"><span>Nome do titular</span><input name="titular" maxlength="100" required autocomplete="off"></label><label class="campo campo-span"><span>CPF fictício do comprador</span><input name="cpf" inputmode="numeric" maxlength="14" placeholder="000.000.000-00" required autocomplete="off"></label></div><small class="aviso-pix">Use dados fictícios. Não informe número de conta, senha, agência nem dados bancários reais. O CPF completo não é armazenado.</small></div><button class="btn" type="submit">Confirmar pagamento demonstrativo • ${brl(r.preco_conteudo)}</button></form><aside class="resumo-pedido"><span class="eyebrow">resumo</span><h3>${esc(r.titulo)}</h3><div class="linha-resumo total-final"><span>Total demonstrativo</span><strong>${brl(r.preco_conteudo)}</strong></div><small>Após confirmar, a receita fica desbloqueada para esta conta.</small></aside></div></section>`;
+}
+
 function telaReceita(id) {
   const r = achar(id); if (!r) return emBreve('Receita não encontrada', 'Volte ao início e escolha outra receita.');
   const bandeira = r.pais ? `<img class="bandeira" src="https://flagcdn.com/w80/${esc(r.pais)}.png" alt="" loading="lazy">` : '';
   const kit = r.preco_kit > 0 ? `<aside class="kit"><div><span class="eyebrow">kit em destaque</span><b>Prepare em casa</b></div><span class="preco">${brl(r.preco_kit)}</span><button onclick="comprarKit(${r.id_receita})">Adicionar kit</button><small>Estoque disponível: ${r.estoque_disponivel}</small></aside>` : '';
   const video = r.url_video ? `<div class="bloco-receita video-box"><h3>Videoaula</h3><a href="${esc(r.url_video)}" target="_blank" rel="noopener">▶ Abrir videoaula</a>${r.duracao_segundos ? `<span> • ${Math.floor(r.duracao_segundos/60)}m ${r.duracao_segundos%60}s</span>` : ''}</div>` : '';
-  return `<article class="receita"><div class="linha-receita"><a class="chef" href="#chef">← Voltar ao painel</a><a class="voltar" href="#feed" aria-label="Voltar">✕</a></div><div class="corpo-receita">${foto(r,'foto-receita')}<div class="receita-texto"><div class="receita-kicker">${esc(acessoLabel(r.tipo_acesso))} • Receita GastroMatch</div><h1 class="titulo">${esc(r.titulo)}${bandeira}</h1><p class="receita-intro">${esc(r.descricao_introducao || '')}</p><div class="info-receita"><span class="avaliacao-resumo">${estrelas(r.nota)} <strong>${Number(r.nota || 0).toFixed(1)}</strong> (${esc(r.avaliacoes || '0')} avaliações)</span><span>•</span><span>${niveis[r.nivel_dificuldade]}</span><span>•</span><span>${r.tempo_preparo_minutos} min</span><span>•</span><span>${r.rendimento || '-'} porções</span></div><div class="restricoes-detalhe"><strong>Restrições:</strong>${tagsRestricoes(r)}</div><div class="bloco-receita"><h3>Ingredientes</h3><ul>${r.ingredientes.map(i=>`<li>${esc(i)}</li>`).join('')}</ul></div><div class="bloco-receita"><h3>Modo de preparo</h3><ol>${r.preparo.map(p=>`<li>${esc(p)}</li>`).join('')}</ol></div>${video}</div></div><section class="avaliacoes" id="avaliacoesReceita" aria-live="polite"><p class="avaliacoes-carregando">Carregando avaliações...</p></section>${kit}</article>`;
+  if (r.tipo_acesso === 'exclusivo_pago' && !receitasLiberadas.has(chaveAcessoReceita(id))) {
+    return `<article class="receita"><div class="linha-receita"><a class="chef" href="#feed">← Voltar às receitas</a></div><div class="corpo-receita">${foto(r,'foto-receita')}<div class="receita-texto"><div class="receita-kicker">CONTEÚDO EXCLUSIVO</div><h1 class="titulo">${esc(r.titulo)}</h1><p class="receita-intro">${esc(r.descricao_introducao || '')}</p>${avisoAlergenos(r)}<section class="bloco-receita compra-conteudo"><h2>Desbloqueie esta receita</h2><p>Confirme a compra demonstrativa para liberar ingredientes e modo de preparo nesta conta.</p><strong class="preco">${brl(r.preco_conteudo)}</strong><button class="btn" type="button" onclick="confirmarCompraReceita(${Number(id)})">Confirmar compra demonstrativa</button><small>Simulação acadêmica: nenhuma cobrança real será feita.</small></section></div></div></article>`;
+  }
+  return `<article class="receita"><div class="linha-receita"><a class="chef" href="#chef">← Voltar ao painel</a><a class="voltar" href="#feed" aria-label="Voltar">✕</a></div><div class="corpo-receita">${foto(r,'foto-receita')}<div class="receita-texto"><div class="receita-kicker">${esc(acessoLabel(r.tipo_acesso))} • Receita GastroMatch</div><h1 class="titulo">${esc(r.titulo)}${bandeira}</h1><p class="receita-intro">${esc(r.descricao_introducao || '')}</p><div class="info-receita"><span class="avaliacao-resumo">${estrelas(r.nota)} <strong>${Number(r.nota || 0).toFixed(1)}</strong> (${esc(r.avaliacoes || '0')} avaliações)</span><span>•</span><span>${niveis[r.nivel_dificuldade]}</span><span>•</span><span>${r.tempo_preparo_minutos} min</span><span>•</span><span>${r.rendimento || '-'} porções</span></div>${r.tipo_acesso === 'exclusivo_pago' && Number(perfilAtual.id_usuario) === Number(r.id_criador) ? `<section class="compra-conteudo"><strong>Receita exclusiva ? ${brl(r.preco_conteudo)}</strong><button class="btn btn-ghost" onclick="location.hash='#compraReceita-${Number(id)}-preview'">Pr?-visualizar pagamento do comprador</button></section>` : ''}${(r.restricoes || []).length ? `<div class="restricoes-detalhe"><strong>Restrições:</strong>${tagsRestricoes(r)}</div>` : ""}${avisoAlergenos(r)}<div class="bloco-receita"><h3>Ingredientes</h3><ul>${r.ingredientes.map(i=>`<li>${esc(i)}</li>`).join('')}</ul></div><div class="bloco-receita"><h3>Modo de preparo</h3><ol>${r.preparo.map(p=>`<li>${esc(p)}</li>`).join('')}</ol></div>${video}</div></div><section class="avaliacoes" id="avaliacoesReceita" aria-live="polite"><p class="avaliacoes-carregando">Carregando avaliações...</p></section>${kit}</article>`;
 }
 
 function renderizarAvaliacoes(data, idReceita) {
@@ -1946,8 +2024,8 @@ function rota() {
   const [pag, id] = (location.hash.slice(1) || 'inicio').split('-');
   document.querySelectorAll('#menu a').forEach(a => a.classList.toggle('ativo', a.dataset.p === pag));
   limparMapas();
-  $('#app').innerHTML = pag === 'receita' ? telaReceita(id) : (telas[pag] || telas.inicio)();
-  if (pag === 'receita') carregarAvaliacoesReceita(id);
+  $('#app').innerHTML = pag === 'receita' ? telaReceita(id) : pag === 'compraReceita' ? telaPagamentoReceita(id) : (telas[pag] || telas.inicio)();
+  if (pag === 'receita') { carregarAvaliacoesReceita(id); verificarAcessoReceita(id); }
   perfilAtual = carregarPerfil(); atualizarAvatarMini(); salvarCesta(); atualizarBotaoSessao();
   if (pag === 'novareceita') { alternarPrecoConteudo(); alternarKit(); }
   if (pag === 'pagamento') {
