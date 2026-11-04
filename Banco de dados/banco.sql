@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS receitas (
     pais CHAR(2) NULL,
     nota DECIMAL(3,1) NOT NULL DEFAULT 0.0,
     avaliacoes INT NOT NULL DEFAULT 0,
+    restaurante_demo VARCHAR(100) NULL,
     criado_pelo_chef TINYINT(1) NOT NULL DEFAULT 1,
     data_publicacao DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (id_criador) REFERENCES usuarios(id_usuario)

@@ -1072,17 +1072,23 @@ if ($action === 'cadastro_receita') {
         $tipoAcesso = 'gratuito';
     }
 
+    $restauranteDemo = trim((string)($input['restaurante_demo'] ?? ''));
+    $restaurantesDemoPermitidos = ['Cozinha do Bairro', 'Casa da Massa', 'Bairro Gourmet', 'Sabor do Centro', 'Chef da Rua'];
+    if (!in_array($restauranteDemo, $restaurantesDemoPermitidos, true)) {
+        jsonReply(false, 'Selecione um restaurante demonstrativo para associar à receita.', null, 400);
+    }
+
     try {
         $pdo->beginTransaction();
 
         $stmt = $pdo->prepare('INSERT INTO receitas (
             id_criador, titulo, descricao_introducao, rendimento, tempo_preparo_minutos,
             nivel_dificuldade, tipo_acesso, preco_conteudo, img, pais, nota, avaliacoes,
-            criado_pelo_chef, data_publicacao
+            criado_pelo_chef, data_publicacao, restaurante_demo
         ) VALUES (
             :id_criador, :titulo, :descricao, :rendimento, :tempo,
             :nivel, :tipo_acesso, :preco_conteudo, :img, :pais, :nota, :avaliacoes,
-            :criado_pelo_chef, NOW()
+            :criado_pelo_chef, NOW(), :restaurante_demo
         )');
 
         $stmt->execute([
@@ -1099,6 +1105,7 @@ if ($action === 'cadastro_receita') {
             ':nota' => (float)($input['nota'] ?? 0),
             ':avaliacoes' => (int)($input['avaliacoes'] ?? 0),
             ':criado_pelo_chef' => 1,
+            ':restaurante_demo' => $restauranteDemo,
         ]);
 
         $idReceita = (int)$pdo->lastInsertId();
@@ -1159,7 +1166,7 @@ if ($action === 'cadastro_receita') {
         }
 
         $pdo->commit();
-        jsonReply(true, 'Receita criada com sucesso.', ['id_receita' => $idReceita]);
+        jsonReply(true, 'Receita criada e associada ao restaurante com sucesso.', ['id_receita' => $idReceita, 'restaurante_demo' => $restauranteDemo]);
     } catch (Throwable $e) {
         $pdo->rollBack();
         jsonReply(false, 'Erro ao salvar a receita: ' . $e->getMessage(), null, 500);
@@ -1599,16 +1606,16 @@ if (in_array($action, ['admin_receitas', 'admin_receita_editar', 'admin_receita_
     if ($action === 'admin_estoque') {
         $estoque = filter_var($input['estoque_disponivel'] ?? null, FILTER_VALIDATE_INT);
         if ($estoque === false || $estoque < 0) jsonReply(false, 'Estoque deve ser um número inteiro igual ou maior que zero.', null, 400);
-        $stmt = $pdo->prepare('UPDATE kits_ingredientes SET estoque_disponivel = :estoque WHERE id_receita = :id');
+        $stmt = $pdo->prepare('INSERT INTO kits_ingredientes (id_receita, preco_kit, estoque_disponivel) VALUES (:id, 0, :estoque) ON DUPLICATE KEY UPDATE estoque_disponivel = VALUES(estoque_disponivel)');
         $stmt->execute([':estoque' => $estoque, ':id' => $id]);
-        jsonReply(true, $stmt->rowCount() ? 'Estoque atualizado.' : 'Kit não encontrado ou estoque já estava nesse valor.');
+        jsonReply(true, 'Estoque do kit salvo.');
     }
     if ($action === 'admin_preco_kit') {
         $preco = filter_var($input['preco_kit'] ?? null, FILTER_VALIDATE_FLOAT);
         if ($preco === false || $preco <= 0) jsonReply(false, 'Preço do kit deve ser maior que zero.', null, 400);
-        $stmt = $pdo->prepare('UPDATE kits_ingredientes SET preco_kit = :preco WHERE id_receita = :id');
+        $stmt = $pdo->prepare('INSERT INTO kits_ingredientes (id_receita, preco_kit, estoque_disponivel) VALUES (:id, :preco, 0) ON DUPLICATE KEY UPDATE preco_kit = VALUES(preco_kit)');
         $stmt->execute([':preco' => number_format((float)$preco, 2, '.', ''), ':id' => $id]);
-        jsonReply(true, $stmt->rowCount() ? 'Preço do kit atualizado.' : 'Kit não encontrado ou preço já estava nesse valor.');
+        jsonReply(true, 'Preço do kit salvo.');
     }
     $titulo = trim((string)($input['titulo'] ?? ''));
     $tipo = (string)($input['tipo_acesso'] ?? 'gratuito');
@@ -1662,19 +1669,23 @@ if ($action === 'confirmar_compra_receita') {
 if ($action === 'receitas') {
     $stmt = $pdo->query(
         'SELECT r.*, k.preco_kit, k.estoque_disponivel,
-                GROUP_CONCAT(DISTINCT rr.restricao ORDER BY rr.restricao SEPARATOR ",") AS restricoes,
-                GROUP_CONCAT(DISTINCT ra.alergeno ORDER BY ra.alergeno SEPARATOR ",") AS alergenos,
-                v.url_video, v.duracao_segundos,
-                GROUP_CONCAT(DISTINCT i.ingrediente ORDER BY i.ordem SEPARATOR "||") AS ingredientes,
-                GROUP_CONCAT(DISTINCT p.passo ORDER BY p.ordem SEPARATOR "||") AS preparo
+                rr.restricoes, ra.alergenos, v.url_video, v.duracao_segundos,
+                i.ingredientes, p.preparo,
+                COALESCE(av.media, r.nota, 0) AS nota_calculada,
+                COALESCE(av.quantidade, r.avaliacoes, 0) AS avaliacoes_calculadas
          FROM receitas r
-         LEFT JOIN kits_ingredientes k ON k.id_receita = r.id_receita
-         LEFT JOIN receitas_restricoes rr ON rr.id_receita = r.id_receita
-         LEFT JOIN receitas_alergenos ra ON ra.id_receita = r.id_receita
-         LEFT JOIN videoaulas v ON v.id_receita = r.id_receita
-         LEFT JOIN ingredientes_receita i ON i.id_receita = r.id_receita
-         LEFT JOIN preparo_receita p ON p.id_receita = r.id_receita
-         GROUP BY r.id_receita
+         LEFT JOIN (SELECT id_receita, MAX(preco_kit) AS preco_kit, SUM(estoque_disponivel) AS estoque_disponivel FROM kits_ingredientes GROUP BY id_receita) k ON k.id_receita = r.id_receita
+         LEFT JOIN (SELECT id_receita, GROUP_CONCAT(restricao ORDER BY restricao SEPARATOR ",") AS restricoes FROM receitas_restricoes GROUP BY id_receita) rr ON rr.id_receita = r.id_receita
+         LEFT JOIN (SELECT id_receita, GROUP_CONCAT(alergeno ORDER BY alergeno SEPARATOR ",") AS alergenos FROM receitas_alergenos GROUP BY id_receita) ra ON ra.id_receita = r.id_receita
+         LEFT JOIN (SELECT id_receita, MAX(url_video) AS url_video, MAX(duracao_segundos) AS duracao_segundos FROM videoaulas GROUP BY id_receita) v ON v.id_receita = r.id_receita
+         LEFT JOIN (SELECT id_receita, GROUP_CONCAT(ingrediente ORDER BY ordem SEPARATOR "||") AS ingredientes FROM ingredientes_receita GROUP BY id_receita) i ON i.id_receita = r.id_receita
+         LEFT JOIN (SELECT id_receita, GROUP_CONCAT(passo ORDER BY ordem SEPARATOR "||") AS preparo FROM preparo_receita GROUP BY id_receita) p ON p.id_receita = r.id_receita
+         LEFT JOIN (
+           SELECT id_receita, ROUND(AVG(nota), 1) AS media, COUNT(*) AS quantidade FROM (
+             SELECT id_receita, nota FROM avaliacoes_receitas UNION ALL
+             SELECT id_receita, nota FROM avaliacoes_demo
+           ) todas_avaliacoes GROUP BY id_receita
+         ) av ON av.id_receita = r.id_receita
          ORDER BY r.data_publicacao DESC, r.id_receita DESC'
     );
 
@@ -1699,8 +1710,9 @@ if ($action === 'receitas') {
             'preco_conteudo' => (float)($receita['preco_conteudo'] ?? 0),
             'img' => normalizeRecipeImagePath((string)($receita['img'] ?? '')),
             'pais' => $receita['pais'],
-            'nota' => (float)($receita['nota'] ?? 0),
-            'avaliacoes' => (int)($receita['avaliacoes'] ?? 0),
+            'nota' => (float)($receita['nota_calculada'] ?? 0),
+            'avaliacoes' => (int)($receita['avaliacoes_calculadas'] ?? 0),
+            'restaurante_demo' => $receita['restaurante_demo'] ?? null,
             'restricoes' => $restricoes,
             'alergenos' => $alergenos,
             'ingredientes' => $ingredientes,

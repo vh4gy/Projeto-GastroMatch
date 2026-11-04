@@ -41,7 +41,12 @@ const MAPA_ESTILO = {
 const CENTRO_DEMO = { nome: 'Centro de Maravilha (demonstração)', lat: -26.7606, lng: -53.1748 };
 
 const RAIO_ENTREGA_PADRAO_KM = 2.5;
-let raioEntregaAtualKm = RAIO_ENTREGA_PADRAO_KM;
+const CHAVE_RAIOS_RESTAURANTES = 'gm_raios_restaurantes_v1';
+function carregarRaiosRestaurantes() {
+  try { return JSON.parse(localStorage.getItem(CHAVE_RAIOS_RESTAURANTES) || '{}') || {}; }
+  catch (_) { return {}; }
+}
+let raiosRestaurantes = carregarRaiosRestaurantes();
 const PREPARO_SIMULACAO_MS = 3500;  // tempo "preparando no restaurante" antes de o entregador sair
 const DURACAO_SIMULACAO_MS = 40000; // a viagem simulada dura 40 s na tela
 
@@ -74,7 +79,8 @@ function restaurantesDemo() {
     const lat = CENTRO_DEMO.lat + (rest.norte * ESCALA_DISTANCIA_DEMO) / 111.2;
     const lng = CENTRO_DEMO.lng + (rest.leste * ESCALA_DISTANCIA_DEMO) / (111.2 * Math.cos(CENTRO_DEMO.lat * Math.PI / 180));
     const distancia = distanciaKmEntre(CENTRO_DEMO.lat, CENTRO_DEMO.lng, lat, lng);
-    return { nome: rest.nome, lat, lng, distancia, tempo: Math.round(8 + distancia * 3.5) };
+    const raio = Number(raiosRestaurantes[rest.nome]) || RAIO_ENTREGA_PADRAO_KM;
+    return { nome: rest.nome, lat, lng, distancia, tempo: Math.round(8 + distancia * 3.5), raio, disponivel: distancia <= raio };
   }).sort((a, b) => a.distancia - b.distancia);
 }
 
@@ -86,25 +92,29 @@ function restauranteDoPedido() {
 }
 
 function restauranteDaReceita(idReceita) {
+  const receita = receitas?.find(item => Number(item.id_receita) === Number(idReceita));
   const indicePorReceita = { 1: 0, 2: 1, 3: 2, 4: 3, 5: 4 };
-  const indice = indicePorReceita[Number(idReceita)];
-  if (indice === undefined) return null;
-  const definido = restaurantesProximos[indice];
+  const nomeRestaurante = receita?.restaurante_demo || restaurantesProximos[indicePorReceita[Number(idReceita)]]?.nome;
+  const definido = restaurantesProximos.find(rest => rest.nome === nomeRestaurante);
+  if (!definido) return null;
   const lat = CENTRO_DEMO.lat + (definido.norte * ESCALA_DISTANCIA_DEMO) / 111.2;
   const lng = CENTRO_DEMO.lng + (definido.leste * ESCALA_DISTANCIA_DEMO) / (111.2 * Math.cos(CENTRO_DEMO.lat * Math.PI / 180));
   const distancia = distanciaKmEntre(CENTRO_DEMO.lat, CENTRO_DEMO.lng, lat, lng);
-  return { nome: definido.nome, lat, lng, distancia, disponivel: distancia <= raioEntregaAtualKm };
+  const raio = Number(raiosRestaurantes[definido.nome]) || RAIO_ENTREGA_PADRAO_KM;
+  return { nome: definido.nome, lat, lng, distancia, raio, disponivel: distancia <= raio };
 }
 
-function montarListaRestaurantesPerto(raioKm) {
+function montarListaRestaurantesPerto() {
   const dentro = restaurantesDemo();
   if (!dentro.length) return '<div class="sem-restaurantes">Nenhum restaurante cadastrado.</div>';
-  return dentro.map(rest => `
-      <div class="restaurante-card${rest.distancia > Number(raioKm) ? ' indisponivel' : ''}">
+  return dentro.map((rest, index) => `
+      <div class="restaurante-card${!rest.disponivel ? ' indisponivel' : ''}" data-nome="${esc(rest.nome)}">
         <div>
           <span class="eyebrow">restaurante</span>
           <h3>${esc(rest.nome)}</h3>
-          <small>${rest.distancia <= Number(raioKm) ? 'Atende este endereço' : 'Fora do raio • receitas indisponíveis'}</small>
+          <small class="restaurante-status">${rest.disponivel ? 'Atende este endereço' : 'Fora do raio • receitas indisponíveis'}</small>
+          <label class="raio-restaurante" for="raioRestaurante${index}"><span>Raio próprio</span><strong>${String(rest.raio).replace('.', ',')} km</strong></label>
+          <input id="raioRestaurante${index}" class="raio-restaurante-slider" type="range" min="0.5" max="5" step="0.5" value="${rest.raio}" oninput="atualizarRaioRestaurante('${esc(rest.nome)}', this.value)">
         </div>
         <div class="restaurante-meta">
           <span>${rest.tempo} min</span>
@@ -172,11 +182,11 @@ function inicializarMapaPerto() {
       .setPopup(new window.maplibregl.Popup().setHTML(`<strong>Você</strong><br>${esc(CENTRO_DEMO.nome)}`))
       .addTo(map);
 
-    const slider = document.getElementById('raioEntrega');
-    const estado = { map, pronto: false, raio: slider ? Number(slider.value) : RAIO_ENTREGA_PADRAO_KM, marcadores: [] };
+    const estado = { map, pronto: false, marcadores: [], fontesRaio: [] };
 
     restaurantesDemo().forEach(rest => {
       const el = criarMarcador('marcador-rest', '🍽️', rest.nome);
+      el.classList.toggle('fora', !rest.disponivel);
       const marker = new window.maplibregl.Marker({ element: el })
         .setLngLat([rest.lng, rest.lat])
         .setPopup(new window.maplibregl.Popup({ offset: 18 }).setHTML(`<strong>${esc(rest.nome)}</strong><br>${rest.distancia.toFixed(1)} km • ${rest.tempo} min<br><small>Restaurante fictício (demonstração)</small>`))
@@ -185,41 +195,67 @@ function inicializarMapaPerto() {
     });
 
     map.on('load', () => {
-      map.addSource('raio-entrega', { type: 'geojson', data: circuloGeoJSON(CENTRO_DEMO.lat, CENTRO_DEMO.lng, estado.raio) });
-      map.addLayer({ id: 'raio-entrega-fill', type: 'fill', source: 'raio-entrega', paint: { 'fill-color': '#266a46', 'fill-opacity': 0.12 } });
-      map.addLayer({ id: 'raio-entrega-line', type: 'line', source: 'raio-entrega', paint: { 'line-color': '#266a46', 'line-width': 2, 'line-dasharray': [2, 2] } });
+      restaurantesDemo().forEach((rest, index) => {
+        const sourceId = `raio-restaurante-${index}`;
+        map.addSource(sourceId, { type: 'geojson', data: circuloGeoJSON(rest.lat, rest.lng, rest.raio) });
+        map.addLayer({ id: `${sourceId}-fill`, type: 'fill', source: sourceId, layout: { visibility: 'none' }, paint: { 'fill-color': index % 2 ? '#f28a18' : '#266a46', 'fill-opacity': 0.07 } });
+        map.addLayer({ id: `${sourceId}-line`, type: 'line', source: sourceId, layout: { visibility: 'none' }, paint: { 'line-color': index % 2 ? '#f28a18' : '#266a46', 'line-width': 1.5, 'line-dasharray': [2, 2] } });
+        const item = estado.marcadores.findIndex(marker => marker.rest.nome === rest.nome);
+        estado.marcadores[item]?.el.addEventListener('click', () => {
+          restaurantesDemo().forEach((_, i) => {
+            const visible = i === index ? 'visible' : 'none';
+            map.setLayoutProperty(`raio-restaurante-${i}-fill`, 'visibility', visible);
+            map.setLayoutProperty(`raio-restaurante-${i}-line`, 'visibility', visible);
+          });
+        });
+        estado.fontesRaio.push({ sourceId, rest });
+      });
       estado.pronto = true;
-      atualizarRaioPerto(estado.raio);
+      atualizarRaioTodosRestaurantes();
     });
 
     mapaPerto = estado;
-    atualizarRaioPerto(estado.raio);
+    atualizarRaioTodosRestaurantes();
   } catch (error) {
     console.warn('O mapa não inicializou nesta página:', error);
     mapEl.innerHTML = '<div class="mapa-vazio"><div><strong>Mapa de restaurantes</strong><p>Não foi possível iniciar o mapa. Veja o console do navegador (F12).</p></div></div>';
   }
 }
 
-function atualizarRaioPerto(valor) {
+function atualizarRaioRestaurante(nome, valor) {
   const raio = Number(valor) || RAIO_ENTREGA_PADRAO_KM;
-  raioEntregaAtualKm = raio;
-  const rotulo = document.getElementById('raioValor');
+  raiosRestaurantes[nome] = raio;
+  try { localStorage.setItem(CHAVE_RAIOS_RESTAURANTES, JSON.stringify(raiosRestaurantes)); } catch (_) {}
+  atualizarRaioTodosRestaurantes();
+}
+
+function atualizarRaioTodosRestaurantes() {
   const lista = document.getElementById('listaRestaurantes');
-  if (rotulo) rotulo.textContent = `${raio.toString().replace('.', ',')} km`;
-  if (lista) lista.innerHTML = montarListaRestaurantesPerto(raio);
+  if (lista) {
+    const atualizados = new Map(restaurantesDemo().map(rest => [rest.nome, rest]));
+    lista.querySelectorAll('.restaurante-card').forEach(card => {
+      const rest = atualizados.get(card.dataset.nome);
+      if (!rest) return;
+      card.classList.toggle('indisponivel', !rest.disponivel);
+      const status = card.querySelector('.restaurante-status');
+      const valor = card.querySelector('.raio-restaurante strong');
+      if (status) status.textContent = rest.disponivel ? 'Atende este endereço' : 'Fora do raio • receitas indisponíveis';
+      if (valor) valor.textContent = `${String(rest.raio).replace('.', ',')} km`;
+    });
+  }
   const receitasPerto = document.getElementById('receitasPerto');
   if (receitasPerto) receitasPerto.innerHTML = receitas.map(r => cardReceita(r, true, true)).join('');
   if (!mapaPerto) return;
 
-  mapaPerto.raio = raio;
-  mapaPerto.marcadores.forEach(({ el, rest }) => el.classList.toggle('fora', rest.distancia > raio));
+  const porNome = new Map(restaurantesDemo().map(rest => [rest.nome, rest]));
+  mapaPerto.marcadores.forEach(({ el, rest }) => {
+    const atual = porNome.get(rest.nome) || rest;
+    el.classList.toggle('fora', !atual.disponivel);
+    const index = mapaPerto.marcadores.findIndex(item => item.rest.nome === rest.nome);
+    const sourceId = `raio-restaurante-${index}`;
+    mapaPerto.map.getSource(sourceId)?.setData(circuloGeoJSON(atual.lat, atual.lng, atual.raio));
+  });
   if (!mapaPerto.pronto) return;
-
-  const circulo = circuloGeoJSON(CENTRO_DEMO.lat, CENTRO_DEMO.lng, raio);
-  mapaPerto.map.getSource('raio-entrega')?.setData(circulo);
-  const bounds = new window.maplibregl.LngLatBounds();
-  circulo.geometry.coordinates[0].forEach(coord => bounds.extend(coord));
-  mapaPerto.map.fitBounds(bounds, { padding: 36, duration: 400 });
 }
 
 /* ---------- Rastreio do pedido (rota simulada) ---------- */
@@ -860,7 +896,8 @@ function normalizarReceitaAPI(receita) {
     preparo: parseArray(receita.preparo),
     criado_pelo_chef: Boolean(receita.criado_pelo_chef ?? true),
     img: receita.img || 'img/pastel.png',
-    tipo_acesso: receita.tipo_acesso || 'gratuito'
+    tipo_acesso: receita.tipo_acesso || 'gratuito',
+    restaurante_demo: receita.restaurante_demo || ''
   };
 }
 
@@ -879,7 +916,7 @@ async function carregarReceitasRemotas() {
 
 async function sincronizarReceitasDoBanco() {
   const remotas = await carregarReceitasRemotas();
-  if (remotas && remotas.length) {
+  if (remotas !== null) {
     receitas = remotas;
     try {
       localStorage.setItem('gm_receitas_criadas', JSON.stringify(receitas.filter(r => r.criado_pelo_chef)));
@@ -1238,11 +1275,28 @@ function aplicar(el, d) {
 }
 
 function mover(passo) {
-  pos = ((pos + passo) % receitas.length + receitas.length) % receitas.length;
+  if (receitas.length < 2) return;
+  if (carrosselEmMovimento) {
+    filaMovimentoCarrossel = Math.max(-4, Math.min(4, filaMovimentoCarrossel + Math.sign(passo)));
+    return;
+  }
+  pos = ((pos + Math.sign(passo)) % receitas.length + receitas.length) % receitas.length;
   document.querySelectorAll('.slide').forEach(el => {
     aplicar(el, deslocamento(Number(el.dataset.i)));
   });
+  carrosselEmMovimento = true;
+  window.setTimeout(() => {
+    carrosselEmMovimento = false;
+    if (filaMovimentoCarrossel) {
+      const proximo = Math.sign(filaMovimentoCarrossel);
+      filaMovimentoCarrossel -= proximo;
+      mover(proximo);
+    }
+  }, 220);
 }
+
+let carrosselEmMovimento = false;
+let filaMovimentoCarrossel = 0;
 
 function abrirSlide(i) {
   const d = deslocamento(i);
@@ -1283,9 +1337,10 @@ const telas = {
           <h1>Descubra. Aprenda.<br><span>Cozinhe.</span></h1>
           <p>Receitas, videoaulas, chefs e kits de ingredientes em uma experiência gastronômica completa.</p>
           <div class="hero-acoes"><a class="btn" href="#feed">Explorar receitas</a><a class="btn btn-ghost" href="#perfil">Meu perfil</a></div>
+          ${Number(perfilAtual?.id_usuario || 0) === 0 ? '<div class="aviso-visitante"><strong>Você está navegando como visitante.</strong><span>Para comprar kits, desbloquear receitas pagas e salvar pedidos, entre ou crie uma conta.</span><a href="login.html">Entrar ou criar conta</a></div>' : ''}
           <div class="hero-dados"><span><b>${receitas.length}</b><small>receitas disponíveis</small></span><span><b>4,6★</b><small>média de avaliações</small></span><span><b>3</b><small>filtros alimentares</small></span></div>
         </div>
-        <div class="hero-mosaico"><div class="hero-img principal">${foto(receitas[4] || receitas[0])}</div><div class="hero-img topo">${foto(receitas[2] || receitas[0])}</div><div class="hero-img canto">${foto(receitas[0])}</div><span class="selo">feito para<br><strong>quem ama cozinhar</strong></span></div>
+        <div class="hero-mosaico"><div class="hero-img principal">${foto(receitas[4] || receitas[0])}</div><div class="hero-img topo">${foto(receitas[2] || receitas[0])}</div><div class="hero-img canto">${foto(receitas[0])}</div><span class="selo">cozinhe com<br><strong>quem entende</strong></span></div>
       </div>
       <div class="destaques"><div class="secao-titulo"><div><span class="eyebrow">giro da semana</span><h2>Receitas em destaque</h2></div><a href="#feed" class="link-seta">Ver todas →</a></div>
         <div class="carrossel"><button class="seta esq" onclick="mover(-1)" aria-label="Anterior">‹</button>${slides}<button class="seta dir" onclick="mover(1)" aria-label="Próxima">›</button></div>
@@ -1308,24 +1363,19 @@ const telas = {
   },
 
   perto() {
-    const raio = RAIO_ENTREGA_PADRAO_KM;
-    const restaurantes = montarListaRestaurantesPerto(raio);
+    const restaurantes = montarListaRestaurantesPerto();
     return `<section class="pagina">
       <div class="pagina-cabecalho"><div><span class="eyebrow">logística local</span><h2>Perto de você</h2><p>Veja quais restaurantes ficam mais próximos da sua localização e simule a rota do pedido.</p></div></div>
-      <div class="local-box"><div class="local-icone">⌖</div><div><h3>Disponibilidade regional</h3><p>Nesta demonstração o mapa usa um ponto central fixo e restaurantes fictícios, só para mostrar como funciona a entrega regional. Ajuste o raio de entrega para ver quais restaurantes atendem o endereço.</p></div></div>
+      <div class="local-box"><div class="local-icone">⌖</div><div><h3>Disponibilidade regional</h3><p>Nesta demonstração o mapa usa um endereço fixo e restaurantes fictícios. Ajuste o raio de cada restaurante; a preferência fica salva neste navegador e as receitas fora da cobertura aparecem indisponíveis.</p></div></div>
       <div class="mapa-container">
         <div id="mapa-perto" class="mapa-localizacao"></div>
         <div class="mapa-fallback">
           <strong>Restaurantes próximos</strong>
-          <div class="raio-controle">
-            <label for="raioEntrega"><span>Raio de entrega</span><strong id="raioValor">${String(raio).replace('.', ',')} km</strong></label>
-            <input id="raioEntrega" type="range" min="0.5" max="5" step="0.5" value="${raio}" oninput="atualizarRaioPerto(this.value)">
-          </div>
           <div class="lista-restaurantes" id="listaRestaurantes">${restaurantes}</div>
           <p class="aviso-demo-mapa">Restaurantes fictícios, usados apenas para demonstrar o funcionamento do site.</p>
         </div>
       </div>
-      <h2>Receitas da região</h2><div class="grade destaque-grid" id="receitasPerto">${receitas.map(r => cardReceita(r, true, true)).join('')}</div>
+      <h2>Receitas da região</h2><p class="subtitulo-regiao">Cada restaurante define e mantém seu próprio raio de entrega.</p><div class="grade destaque-grid" id="receitasPerto">${receitas.map(r => cardReceita(r, true, true)).join('')}</div>
     </section>`;
   },
 
@@ -1434,6 +1484,7 @@ const telas = {
             <label class="campo"><span>Descrição de introdução</span><textarea name="descricao_introducao" maxlength="500" rows="4" required placeholder="Apresente o prato em poucas linhas...">${esc(temp.descricao_introducao)}</textarea></label>
             <div class="form-grid"><label class="campo"><span>Rendimento (porções)</span><input name="rendimento" type="number" min="1" max="100" required value="${esc(temp.rendimento || 2)}"></label><label class="campo"><span>Tempo de preparo (minutos)</span><input name="tempo_preparo_minutos" type="number" min="1" max="1440" required value="${esc(temp.tempo_preparo_minutos || 30)}"></label></div>
             <div class="form-grid"><label class="campo"><span>Nível de dificuldade</span><select name="nivel_dificuldade"><option value="facil" ${temp.nivel_dificuldade === 'facil' || !temp.nivel_dificuldade ? 'selected' : ''}>Fácil</option><option value="medio" ${temp.nivel_dificuldade === 'medio' ? 'selected' : ''}>Médio</option><option value="dificil" ${temp.nivel_dificuldade === 'dificil' ? 'selected' : ''}>Difícil</option></select></label><label class="campo"><span>Tipo de acesso</span><select id="tipoAcesso" name="tipo_acesso" onchange="alternarPrecoConteudo()"><option value="gratuito" ${temp.tipo_acesso === 'exclusivo_pago' ? '' : 'selected'}>Gratuito</option><option value="exclusivo_pago" ${temp.tipo_acesso === 'exclusivo_pago' ? 'selected' : ''}>Exclusivo pago</option></select></label></div>
+            <label class="campo"><span>Restaurante responsável</span><select name="restaurante_demo" required>${restaurantesProximos.map(rest => `<option value="${esc(rest.nome)}" ${temp.restaurante_demo === rest.nome ? 'selected' : ''}>${esc(rest.nome)}</option>`).join('')}</select><small>O restaurante escolhido será mostrado na receita e será a origem da entrega demonstrativa.</small></label>
             <div class="form-grid"><label class="campo campo-span" id="campoPrecoConteudo"><span>Preço do conteúdo (R$)</span><input id="precoConteudo" name="preco_conteudo" type="number" min="0" step="0.01" value="${esc(temp.preco_conteudo || 0)}" placeholder="0,00"></label></div>
           </div>
           <div class="form-card"><div class="form-topo"><div><span class="eyebrow">2 • conteúdo</span><h2>Ingredientes e preparo</h2></div></div>
@@ -1451,7 +1502,7 @@ const telas = {
           <div class="form-card upload-receita"><span class="eyebrow">foto</span><h3>Imagem da receita</h3><div id="previewReceita" class="preview-receita">${temp.img ? `<img src="${esc(temp.img)}" alt="Prévia">` : '<span>🍽️<small>Escolha uma foto bonita do prato.</small></span>'}</div><label class="upload-btn largo" for="fotoReceita">Escolher imagem</label><input id="fotoReceita" type="file" accept="image/png,image/jpeg,image/webp" onchange="prepararFotoReceita(this)"></div>
           <div class="form-card"><span class="eyebrow">videoaula</span><h3>Conteúdo em vídeo</h3><label class="campo"><span>URL do vídeo</span><input name="url_video" type="url" value="${esc(temp.url_video)}" placeholder="https://... "></label><label class="campo"><span>Duração (segundos)</span><input name="duracao_segundos" type="number" min="0" value="${esc(temp.duracao_segundos || 0)}"></label><div class="info-box">Esses campos correspondem à tabela <strong>videoaulas</strong>.</div></div>
           <div class="form-card"><span class="eyebrow">kit de ingredientes</span><h3>Oferecer kit?</h3><label class="switch-linha"><input id="oferecerKit" name="oferecer_kit" type="checkbox" onchange="alternarKit()" ${temp.oferecer_kit ? 'checked' : ''}><span>Disponibilizar kit para compra</span></label><div id="dadosKit" class="dados-kit" ${temp.oferecer_kit ? '' : 'hidden'}><label class="campo"><span>Preço do kit (R$)</span><input name="preco_kit" type="number" min="0" step="0.01" value="${esc(temp.preco_kit || 0)}"></label><label class="campo"><span>Estoque disponível</span><input name="estoque_disponivel" type="number" min="0" value="${esc(temp.estoque_disponivel || 0)}"></label><div class="info-box">Ligação com <strong>kits_ingredientes</strong> e, futuramente, <strong>raio_entrega_restaurantes</strong>.</div></div></div>
-          <div class="form-card publicar-box"><button class="btn btn-publicar" type="submit">Publicar receita</button><button class="btn btn-ghost" type="button" onclick="salvarRascunho()">Salvar rascunho</button><small>Simulação local: depois, o back-end poderá enviar tudo para as tabelas do banco.</small></div>
+          <div class="form-card publicar-box"><p id="receitaMensagem" class="form-msg" role="status" aria-live="polite"></p><button class="btn btn-publicar" type="submit">Publicar receita</button><button class="btn btn-ghost" type="button" onclick="salvarRascunho()">Salvar rascunho</button><small>A receita será gravada no banco antes de aparecer no catálogo.</small></div>
         </aside>
       </form></section>`;
   },
@@ -1685,6 +1736,7 @@ function coletarFormularioReceita() {
     url_video: String(dados.get('url_video')||'').trim(),
     duracao_segundos: Number(dados.get('duracao_segundos')||0),
     oferecer_kit: Boolean(dados.get('oferecer_kit')),
+    restaurante_demo: String(dados.get('restaurante_demo') || ''),
     preco_kit: Number(dados.get('preco_kit')||0),
     estoque_disponivel: Number(dados.get('estoque_disponivel')||0),
     img: fotoAtual || 'img/pastel.png'
@@ -1700,6 +1752,7 @@ function salvarRascunho() {
 async function publicarReceitaNoBanco(dados) {
   const resposta = await fetch('api.php?action=cadastro_receita', {
     method: 'POST',
+    credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...dados, id_criador: perfilAtual.id_usuario })
   });
@@ -1723,7 +1776,7 @@ async function publicarReceita(event) {
     const retorno = await publicarReceitaNoBanco(dados);
     const nova = {
       id_receita: Number(retorno.id_receita || 0),
-      ...dados,
+      ...dados, restaurante_demo: retorno.restaurante_demo || dados.restaurante_demo,
       id_criador: perfilAtual.id_usuario,
       nota: 0,
       avaliacoes: '0',
@@ -1738,23 +1791,9 @@ async function publicarReceita(event) {
     location.hash = '#chef';
     return;
   } catch (erro) {
-    if ([400, 401, 403, 409].includes(erro.status)) {
-      toast(erro.message || 'A publicação foi bloqueada pelo servidor.');
-      return;
-    }
-    const novoId = Math.max(0, ...receitas.map(r => Number(r.id_receita)||0)) + 1;
-    const nova = {
-      id_receita: novoId,
-      ...dados,
-      id_criador: perfilAtual.id_usuario,
-      nota: 0, avaliacoes: '0',
-      criado_pelo_chef: true,
-      data_publicacao: new Date().toISOString()
-    };
-    if (!nova.oferecer_kit) { nova.preco_kit = 0; nova.estoque_disponivel = 0; }
-    receitas.push(nova); salvarReceitasCriadas(); window.receitaRascunho = null; window.receitaFotoTemporaria = '';
-    toast(erro.message || 'Receita salva localmente.');
-    location.hash = '#chef';
+    const mensagem = document.getElementById('receitaMensagem');
+    if (mensagem) { mensagem.textContent = erro.message || 'O servidor não confirmou o cadastro. A receita não foi publicada.'; mensagem.className = 'form-msg erro'; }
+    toast(erro.message || 'Não foi possível salvar no banco. Seus dados continuam no formulário.');
   }
 }
 
@@ -1835,18 +1874,24 @@ async function enviarPagamentoReceita(event, id) {
 function telaPagamentoReceita(id) {
   const r = achar(id);
   if (!r || r.tipo_acesso !== 'exclusivo_pago' || (receitasLiberadas.has(chaveAcessoReceita(id)) && !location.hash.endsWith('-preview'))) return r ? telaReceita(id) : emBreve('Receita não encontrada', 'Volte ao feed e escolha uma receita.');
-  return `<section class="pagina pagina-pagamento"><div class="pagina-cabecalho"><div><span class="eyebrow">compra de conteúdo</span><h2>Pagamento da receita</h2><p>${esc(r.titulo)}</p></div><a href="#receita-${Number(id)}" class="btn btn-ghost">Voltar à receita</a></div><div class="pagamento-layout"><form class="form-card pagamento-card" onsubmit="enviarPagamentoReceita(event, ${Number(id)})"><div class="payment-box pix-box"><strong>Pix de demonstração</strong><p>Preencha os dados fictícios para simular a confirmação. Nenhuma cobrança será realizada.</p><div class="form-grid"><label class="campo"><span>Banco usado na simulação</span><select name="banco" required><option value="">Selecione</option><option value="banco_do_brasil">Banco do Brasil</option><option value="caixa">Caixa</option><option value="itau">Itaú</option><option value="bradesco">Bradesco</option><option value="santander">Santander</option><option value="inter">Inter</option><option value="nubank">Nubank</option><option value="outro">Outro</option></select></label><label class="campo"><span>Nome do titular</span><input name="titular" maxlength="100" required autocomplete="off"></label><label class="campo campo-span"><span>CPF fictício do comprador</span><input name="cpf" inputmode="numeric" maxlength="14" placeholder="000.000.000-00" required autocomplete="off"></label></div><small class="aviso-pix">Use dados fictícios. Não informe número de conta, senha, agência nem dados bancários reais. O CPF completo não é armazenado.</small></div><button class="btn" type="submit">Confirmar pagamento demonstrativo • ${brl(r.preco_conteudo)}</button></form><aside class="resumo-pedido"><span class="eyebrow">resumo</span><h3>${esc(r.titulo)}</h3><div class="linha-resumo total-final"><span>Total demonstrativo</span><strong>${brl(r.preco_conteudo)}</strong></div><small>Após confirmar, a receita fica desbloqueada para esta conta.</small></aside></div></section>`;
+  return `<section class="pagina pagina-pagamento"><div class="pagina-cabecalho"><div><span class="eyebrow">compra de conteúdo</span><h2>Pagamento da receita</h2><p>${esc(r.titulo)}</p></div><a href="#receita-${Number(id)}" class="btn btn-ghost">Voltar à receita</a></div><div class="pagamento-layout"><form class="form-card pagamento-card" onsubmit="enviarPagamentoReceita(event, ${Number(id)})"><div class="payment-box pix-box"><strong>Pix de demonstração</strong><p>Preencha os dados fictícios para simular a confirmação. Nenhuma cobrança será realizada.</p><div class="form-grid"><label class="campo"><span>Banco usado na simulação</span><select name="banco" required><option value="">Selecione</option><option value="banco_do_brasil">Banco do Brasil</option><option value="caixa">Caixa</option><option value="itau">Itaú</option><option value="bradesco">Bradesco</option><option value="santander">Santander</option><option value="inter">Inter</option><option value="nubank">Nubank</option><option value="outro">Outro</option></select></label><label class="campo"><span>Nome do titular</span><input name="titular" maxlength="100" required autocomplete="off"></label><label class="campo campo-span"><span>CPF fictício do comprador</span><input name="cpf" inputmode="numeric" maxlength="14" placeholder="000.000.000-00" required autocomplete="off" oninput="formatarCpfCampo(this)"></label></div><small class="aviso-pix">Use dados fictícios. Não informe número de conta, senha, agência nem dados bancários reais. O CPF completo não é armazenado.</small></div><button class="btn" type="submit">Confirmar pagamento demonstrativo • ${brl(r.preco_conteudo)}</button></form><aside class="resumo-pedido"><span class="eyebrow">resumo</span><h3>${esc(r.titulo)}</h3><div class="linha-resumo total-final"><span>Total demonstrativo</span><strong>${brl(r.preco_conteudo)}</strong></div><small>Após confirmar, a receita fica desbloqueada para esta conta.</small></aside></div></section>`;
+}
+
+function formatarCpfCampo(campo) {
+  const digits = campo.value.replace(/\D/g, '').slice(0, 11);
+  campo.value = digits.replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d{1,2})$/, '$1-$2');
 }
 
 function telaReceita(id) {
   const r = achar(id); if (!r) return emBreve('Receita não encontrada', 'Volte ao início e escolha outra receita.');
+  const avisoVisitante = Number(perfilAtual?.id_usuario || 0) === 0 ? '<div class="aviso-visitante"><strong>Você está navegando como visitante.</strong><span>Entre ou crie uma conta para comprar kits, desbloquear receitas pagas e salvar pedidos.</span><a href="login.html">Entrar ou criar conta</a></div>' : '';
   const bandeira = r.pais ? `<img class="bandeira" src="https://flagcdn.com/w80/${esc(r.pais)}.png" alt="" loading="lazy">` : '';
   const kit = r.preco_kit > 0 ? `<aside class="kit"><div><span class="eyebrow">kit em destaque</span><b>Prepare em casa</b></div><span class="preco">${brl(r.preco_kit)}</span><button onclick="comprarKit(${r.id_receita})">Adicionar kit</button><small>Estoque disponível: ${r.estoque_disponivel}</small></aside>` : '';
   const video = r.url_video ? `<div class="bloco-receita video-box"><h3>Videoaula</h3><a href="${esc(r.url_video)}" target="_blank" rel="noopener">▶ Abrir videoaula</a>${r.duracao_segundos ? `<span> • ${Math.floor(r.duracao_segundos/60)}m ${r.duracao_segundos%60}s</span>` : ''}</div>` : '';
   if (r.tipo_acesso === 'exclusivo_pago' && !receitasLiberadas.has(chaveAcessoReceita(id))) {
-    return `<article class="receita"><div class="linha-receita"><a class="chef" href="#feed">← Voltar às receitas</a></div><div class="corpo-receita">${foto(r,'foto-receita')}<div class="receita-texto"><div class="receita-kicker">CONTEÚDO EXCLUSIVO</div><h1 class="titulo">${esc(r.titulo)}</h1><p class="receita-intro">${esc(r.descricao_introducao || '')}</p>${avisoAlergenos(r)}<section class="bloco-receita compra-conteudo"><h2>Desbloqueie esta receita</h2><p>Confirme a compra demonstrativa para liberar ingredientes e modo de preparo nesta conta.</p><strong class="preco">${brl(r.preco_conteudo)}</strong><button class="btn" type="button" onclick="confirmarCompraReceita(${Number(id)})">Confirmar compra demonstrativa</button><small>Simulação acadêmica: nenhuma cobrança real será feita.</small></section></div></div></article>`;
+    return `<article class="receita"><div class="linha-receita"><a class="chef" href="#feed">← Voltar às receitas</a></div><div class="corpo-receita">${foto(r,'foto-receita')}<div class="receita-texto"><div class="receita-kicker">CONTEÚDO EXCLUSIVO</div><h1 class="titulo">${esc(r.titulo)}</h1><p class="receita-intro">${esc(r.descricao_introducao || '')}</p>${avisoVisitante}${avisoAlergenos(r)}<section class="bloco-receita compra-conteudo"><h2>Desbloqueie esta receita</h2><p>Confirme a compra demonstrativa para liberar ingredientes e modo de preparo nesta conta.</p><strong class="preco">${brl(r.preco_conteudo)}</strong><button class="btn" type="button" onclick="confirmarCompraReceita(${Number(id)})">Confirmar compra demonstrativa</button><small>Simulação acadêmica: nenhuma cobrança real será feita.</small></section></div></div></article>`;
   }
-  return `<article class="receita"><div class="linha-receita"><a class="chef" href="#chef">← Voltar ao painel</a><a class="voltar" href="#feed" aria-label="Voltar">✕</a></div><div class="corpo-receita">${foto(r,'foto-receita')}<div class="receita-texto"><div class="receita-kicker">${esc(acessoLabel(r.tipo_acesso))} • Receita GastroMatch</div><h1 class="titulo">${esc(r.titulo)}${bandeira}</h1><p class="receita-intro">${esc(r.descricao_introducao || '')}</p><div class="info-receita"><span class="avaliacao-resumo">${estrelas(r.nota)} <strong>${Number(r.nota || 0).toFixed(1)}</strong> (${esc(r.avaliacoes || '0')} avaliações)</span><span>•</span><span>${niveis[r.nivel_dificuldade]}</span><span>•</span><span>${r.tempo_preparo_minutos} min</span><span>•</span><span>${r.rendimento || '-'} porções</span></div>${r.tipo_acesso === 'exclusivo_pago' && Number(perfilAtual.id_usuario) === Number(r.id_criador) ? `<section class="compra-conteudo"><strong>Receita exclusiva ? ${brl(r.preco_conteudo)}</strong><button class="btn btn-ghost" onclick="location.hash='#compraReceita-${Number(id)}-preview'">Pr?-visualizar pagamento do comprador</button></section>` : ''}${(r.restricoes || []).length ? `<div class="restricoes-detalhe"><strong>Restrições:</strong>${tagsRestricoes(r)}</div>` : ""}${avisoAlergenos(r)}<div class="bloco-receita"><h3>Ingredientes</h3><ul>${r.ingredientes.map(i=>`<li>${esc(i)}</li>`).join('')}</ul></div><div class="bloco-receita"><h3>Modo de preparo</h3><ol>${r.preparo.map(p=>`<li>${esc(p)}</li>`).join('')}</ol></div>${video}</div></div><section class="avaliacoes" id="avaliacoesReceita" aria-live="polite"><p class="avaliacoes-carregando">Carregando avaliações...</p></section>${kit}</article>`;
+  return `<article class="receita"><div class="linha-receita"><a class="chef" href="#chef">← Voltar ao painel</a><a class="voltar" href="#feed" aria-label="Voltar">✕</a></div><div class="corpo-receita">${foto(r,'foto-receita')}<div class="receita-texto"><div class="receita-kicker">${esc(acessoLabel(r.tipo_acesso))} • Receita GastroMatch</div><h1 class="titulo">${esc(r.titulo)}${bandeira}</h1><p class="receita-intro">${esc(r.descricao_introducao || '')}</p>${avisoVisitante}<div class="info-receita"><span class="avaliacao-resumo">${estrelas(r.nota)} <strong>${Number(r.nota || 0).toFixed(1)}</strong> (${esc(r.avaliacoes || '0')} avaliações)</span><span>•</span><span>${niveis[r.nivel_dificuldade]}</span><span>•</span><span>${r.tempo_preparo_minutos} min</span><span>•</span><span>${r.rendimento || '-'} porções</span></div>${r.tipo_acesso === 'exclusivo_pago' && Number(perfilAtual.id_usuario) === Number(r.id_criador) ? `<section class="compra-conteudo"><strong>Receita exclusiva • ${brl(r.preco_conteudo)}</strong><button class="btn btn-ghost" onclick="location.hash='#compraReceita-${Number(id)}-preview'">Pré-visualizar pagamento do comprador</button></section>` : ''}${(r.restricoes || []).length ? `<div class="restricoes-detalhe"><strong>Restrições:</strong>${tagsRestricoes(r)}</div>` : ""}${avisoAlergenos(r)}<div class="bloco-receita"><h3>Ingredientes</h3><ul>${r.ingredientes.map(i=>`<li>${esc(i)}</li>`).join('')}</ul></div><div class="bloco-receita"><h3>Modo de preparo</h3><ol>${r.preparo.map(p=>`<li>${esc(p)}</li>`).join('')}</ol></div>${video}</div></div><section class="avaliacoes" id="avaliacoesReceita" aria-live="polite"><p class="avaliacoes-carregando">Carregando avaliações...</p></section>${kit}</article>`;
 }
 
 function renderizarAvaliacoes(data, idReceita) {
@@ -2022,6 +2067,7 @@ function atualizarMetodoPagamento() {
 
 function rota() {
   const [pag, id] = (location.hash.slice(1) || 'inicio').split('-');
+  perfilAtual = carregarPerfil();
   document.querySelectorAll('#menu a').forEach(a => a.classList.toggle('ativo', a.dataset.p === pag));
   limparMapas();
   $('#app').innerHTML = pag === 'receita' ? telaReceita(id) : pag === 'compraReceita' ? telaPagamentoReceita(id) : (telas[pag] || telas.inicio)();
